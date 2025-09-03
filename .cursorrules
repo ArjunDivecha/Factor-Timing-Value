@@ -1,0 +1,135 @@
+# Cursor Rules for T2 Factor Timing Project
+
+## Core Development Rules
+- DO NOT DELETE FILES OR MOVE FILES WITHOUT EXPLICIT PERMISSION
+- NO SIMULATED CODE - if you can't make it work, just say so. Do not write simulations
+- DO NOT DO ANYTHING I DIDN'T ASK YOU TO DO - THIS IS MY CODE AND ONLY I GET TO DECIDE
+- If any file you're writing or working on exceeds 500 lines - look for ways to break it up into smaller segments that don't challenge the context window of Cursor
+- Don't use seaborn for plotting
+- Don't write code while we're discussing the plan. Ask before writing code
+
+## Project Context
+You are an expert Python programmer helping develop a comprehensive multi-model stock market oriented systems.
+
+## System Specifications
+- Running on M4 Max Mac with 128GB RAM
+- Always maximize use of memory, GPU and parallelization
+
+## File Format Preferences
+- When writing data files use xlsx rather than csv unless explicitly instructed
+- When writing graphs, use pdf rather than png
+- Use the Excel MCP server whenever reading Excel files (don't write Python programs each time)
+
+## Documentation Requirements
+Document everything so a 10th grader can understand it.
+
+### File Documentation Structure
+At the top of each script, clearly document:
+
+**INPUT FILES:**
+- List all input files with full paths and brief descriptions
+- Specify required format and structure of each input file
+
+**OUTPUT FILES:**
+- List all output files with full paths and brief descriptions
+- Document the format and contents of each output file
+
+Include:
+- Version history and date of last update
+- Clear section headers and comments throughout the code
+- Put the name of input and output files prominently in the top of the documentation for easy reference
+
+### Missing Data Handling
+- For any missing country data, fill with the mean of available countries
+- Document which values were filled and maintain a log of replacements
+- Include data quality checks and validation steps
+- Generate reports highlighting data completeness by country
+
+## Excel Date Formatting Guidelines
+
+When writing Excel files in Python code:
+
+1. ALWAYS add proper date formatting for date columns using this pattern:
+
+```python
+# After creating the pandas DataFrame with date columns
+with pd.ExcelWriter('output.xlsx', engine='xlsxwriter') as writer:
+    # Write the DataFrame
+    df.to_excel(writer, sheet_name='Sheet1', index=False)
+    
+    # Access workbook and worksheet objects
+    workbook = writer.book
+    worksheet = writer.sheets['Sheet1']
+    
+    # Create date format - choose preferred format:
+    # Common formats: 'yyyy-mm-dd', 'dd-mmm-yyyy', 'mm/dd/yyyy', 'mmmm d, yyyy'
+    date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
+    
+    # Apply format to date column(s)
+    date_col_idx = df.columns.get_loc('DateColumnName')
+    for row in range(len(df)):
+        worksheet.write(row+1, date_col_idx, df['DateColumnName'].iloc[row], date_format)
+```
+
+2. For Excel serial dates (numerical dates), convert to datetime first:
+
+```python
+def excel_serial_to_datetime(serial_number):
+    """Convert Excel serial date to datetime."""
+    if not isinstance(serial_number, (int, float)):
+        return serial_number
+    # Excel epoch starts at 1899-12-30
+    # Adjust for Excel's 1900 leap year bug
+    if serial_number > 59:
+        serial_number -= 1
+    return datetime(1899, 12, 30) + timedelta(days=serial_number)
+
+# Apply to DataFrame column
+df['DateColumn'] = df['DateColumn'].apply(excel_serial_to_datetime)
+```
+
+3. Always set appropriate column widths for date columns:
+
+```python
+# Adjust column width for better visibility
+worksheet.set_column(date_col_idx, date_col_idx, 15)  # Width of 15
+```
+
+4. Use the right date format string based on requirements:
+   - 'yyyy-mm-dd' → 2024-01-31
+   - 'dd-mmm-yyyy' → 31-Jan-2024
+   - 'mm/dd/yyyy' → 01/31/2024
+   - 'mmmm d, yyyy' → January 31, 2024
+
+5. For multiple date columns, apply formatting to each:
+
+```python
+date_columns = ['Date1', 'Date2']
+for date_col in date_columns:
+    col_idx = df.columns.get_loc(date_col)
+    for row in range(len(df)):
+        worksheet.write(row+1, col_idx, df[date_col].iloc[row], date_format)
+```
+
+## Jupyter Notebook Editing Instructions
+
+When editing Jupyter notebooks:
+
+1. NEVER try to edit notebooks directly with edit_file - it will likely fail due to complex JSON structure
+
+2. Instead, follow this process:
+   a. Install jupytext if needed: pip install jupytext
+   b. Convert notebook to Python: jupytext --to py "Notebook.ipynb" --output "Notebook.py"
+   c. Edit the Python file with edit_file
+   d. Convert back to notebook: jupytext --to notebook "Notebook.py"
+   
+3. Alternatively use nbconvert:
+   a. Convert notebook: jupyter nbconvert --to python "Notebook.ipynb" --output "temp.py"
+   b. Edit the Python file
+   c. Convert back: jupyter nbconvert --to notebook "temp.py" --output "Notebook.ipynb"
+   
+4. After conversion, check that the notebook structure is preserved correctly
+
+5. Note: Converting will remove cell outputs - the notebook will need to be re-run to generate outputs
+
+Always prefer jupytext when available as it preserves more notebook metadata. 

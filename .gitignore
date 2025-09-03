@@ -1,0 +1,114 @@
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Local development settings
+.env
+.venv
+env/
+venv/
+ENV/
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+
+# Data files - exclude all data files from version control
+*.xlsx
+*.xls
+*.csv
+*.pdf
+*.db
+*.sqlite
+*.h5
+*.parquet
+*.feather
+*.pickle
+*.pkl
+
+# Instead include sample data or data placeholders if needed
+!sample_data/
+!data_templates/
+# Uncomment below to allow specific sample data files
+# !sample_data/*.csv
+# !data_templates/*.xlsx 
+# SpecStory explanation file
+.specstory/.what-is-this.md
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.test
+.env*.local
+
+# API Keys and secrets
+*.key
+*.pem
+secrets.json
+credentials.json
+config.json
+
