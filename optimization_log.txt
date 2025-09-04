@@ -1,0 +1,60 @@
+2025-09-03 17:16:57,973 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
+2025-09-03 17:16:57,973 - INFO - Loading data for GMM regime analysis...
+2025-09-03 17:16:58,058 - INFO - Successfully loaded 307 monthly returns.
+2025-09-03 17:16:58,058 - INFO - Successfully loaded 10472 factor exposure records.
+2025-09-03 17:16:58,058 - INFO - Creating features for regime detection...
+2025-09-03 17:16:58,059 - INFO - Created feature set with 295 observations and 5 features.
+2025-09-03 17:16:58,059 - INFO - Finding optimal number of regimes using GMM and BIC...
+2025-09-03 17:16:58,151 - INFO - Tested 2 regimes, BIC: 3849.38
+2025-09-03 17:16:58,222 - INFO - Tested 3 regimes, BIC: 3731.84
+2025-09-03 17:16:58,309 - INFO - Tested 4 regimes, BIC: 3731.43
+2025-09-03 17:16:58,395 - INFO - Tested 5 regimes, BIC: 3701.38
+2025-09-03 17:16:58,543 - INFO - Tested 6 regimes, BIC: 3732.97
+2025-09-03 17:16:58,543 - INFO - Optimal number of regimes found: 5
+2025-09-03 17:16:58,543 - INFO - Analyzing and labeling regimes...
+2025-09-03 17:16:58,545 - INFO - Assigned descriptive labels to regimes.
+2025-09-03 17:16:58,547 - INFO - 
+Regime Characteristics:
+         Returns  Volatility_3M  ...  Kurtosis_12M             Label
+Regime                           ...                                
+0       0.026425       0.193496  ...     -0.381666  High-Vol Bullish
+1       0.027642       0.107386  ...      0.602313   Low-Vol Bullish
+2       0.022853       0.074574  ...      1.771235   Low-Vol Bullish
+3       0.020624       0.317501  ...      0.820244  High-Vol Bullish
+4      -0.017039       0.146405  ...     -0.269811   Low-Vol Bearish
+
+[5 rows x 6 columns]
+2025-09-03 17:16:58,548 - INFO - Analyzing strategy performance by regime...
+2025-09-03 17:16:58,551 - INFO - 
+Performance by Regime:
+                  Periods  Annual_Return  ...  Sharpe_Ratio  Win_Rate
+Regime                                    ...                        
+Low-Vol Bearish       122       0.053179  ...      1.307422  0.663934
+High-Vol Bullish       66       0.032033  ...      0.788221  0.621212
+Low-Vol Bullish       107       0.036472  ...      0.840541  0.523364
+
+[3 rows x 5 columns]
+2025-09-03 17:16:58,551 - INFO - Analyzing factor exposures by regime...
+2025-09-03 17:16:58,555 - INFO - 
+Average Factor Exposures by Regime:
+Regime_Label          High-Vol Bullish  Low-Vol Bearish  Low-Vol Bullish
+10Yr Bond 12_CS               0.029412         0.029412         0.029412
+10Yr Bond 12_TS               0.029412         0.029171         0.029412
+10Yr Bond_CS                  0.029412         0.029412         0.029412
+10Yr Bond_TS                  0.029412         0.029412         0.029412
+12-1MTR_CS                    0.029412         0.029412         0.029412
+...                                ...              ...              ...
+Tot Return Index _TS          0.029412         0.029412         0.029412
+Trailing EPS 36_CS            0.024064         0.028206         0.027488
+Trailing EPS 36_TS            0.023619         0.028206         0.027488
+Trailing PE_CS                0.029412         0.029412         0.029412
+Trailing PE_TS                0.029412         0.029412         0.029412
+
+[85 rows x 3 columns]
+2025-09-03 17:16:58,555 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
+2025-09-03 17:16:58,583 - INFO - Excel file saved successfully.
+2025-09-03 17:16:58,584 - INFO - Creating performance visualizations...
+2025-09-03 17:16:59,039 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
+2025-09-03 17:16:59,039 - INFO - Creating factor analysis visualizations...
+2025-09-03 17:16:59,209 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
+2025-09-03 17:16:59,209 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---

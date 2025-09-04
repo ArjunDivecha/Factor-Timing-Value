@@ -11,13 +11,13 @@
 #
 # INPUT FILES:
 # - AssetList.xlsx
-#   Location: /Users/macbook2024/Dropbox/AAA Backup/A Complete/T2 Factor Timing/AssetList.xlsx
+#   Location: /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/AssetList.xlsx
 #   Description: List of country ETF tickers to analyze
 #   Format: Excel file with tickers in the first column
 #
 # OUTPUT FILES:
 # - P2P_Country_Historical_Scores.xlsx
-#   Location: /Users/macbook2024/Dropbox/AAA Backup/A Complete/T2 Factor Timing/P2P_Country_Historical_Scores.xlsx
+#   Location: /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/P2P_Country_Historical_Scores.xlsx
 #   Description: Historical P2P scores for all countries over time
 #   Format: Excel file with dates and scores by country
 #

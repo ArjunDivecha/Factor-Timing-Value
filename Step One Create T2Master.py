@@ -516,9 +516,9 @@ def process_excel_file() -> None:
     
     try:
         # Input/output paths
-        input_file = '/Users/macbook2024/Dropbox/AAA Backup/Master Database/Country Bloomberg Data Master T.xlsx'
+        input_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/Master Database/Country Bloomberg Data Master T.xlsx'
         p2p_file = 'P2P_Country_Historical_Scores.xlsx'
-        output_dir = '/Users/macbook2024/Dropbox/AAA Backup/Transformer/T2'
+        output_dir = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/Transformer/T2'
         
         if not os.path.exists(input_file):
             raise FileNotFoundError(f"Input file not found: {input_file}")

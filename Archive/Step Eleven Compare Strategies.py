@@ -68,7 +68,7 @@ plt.rcParams['figure.figsize'] = [12, 6]
 
 print("Loading data...")
 # Portfolio directory and files
-portfolio_dir = Path("/Users/macbook2024/Dropbox/AAA Backup/Transformer/T2 Factor Timing/Portfolios for Analysis")
+portfolio_dir = Path("/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/Transformer/T2 Factor Timing/Portfolios for Analysis")
 # Only process input portfolios, skip outputs
 output_files = {'Return Results.xlsx', 'Return Charts.pdf'}
 portfolio_files = [pf for pf in portfolio_dir.glob("*.xlsx") if pf.name not in output_files]
