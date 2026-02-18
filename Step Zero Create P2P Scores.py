@@ -389,7 +389,7 @@ def format_enhanced_results(metrics, cum_returns, returns_df, start_date):
     output += "="*100 + "\n\n"
     
     # Format annual returns
-    annual_formatted = annual_rets.applymap(lambda x: f"{x:>8.2f}%")
+    annual_formatted = annual_rets.map(lambda x: f"{x:>8.2f}%")
     output += annual_formatted.to_string(justify='right')
     
     return output + "\n\n" + "="*100

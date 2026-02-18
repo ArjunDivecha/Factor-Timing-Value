@@ -367,14 +367,12 @@ def write_final_country_weights():
         country_columns = list(master_df.columns[1:])  # Skip the first column which is 'Country' (dates)
         print(f"Found {len(country_columns)} countries in column headers")
         
-        # Create a full list of country names with appropriate mapping
+        # Create a full list of country names - keep original names from T2 Master.xlsx
         all_countries = []
-        name_mapping = {'ChinaH': 'Hong Kong'}  # Add more mappings if needed
         
         for country in country_columns:
-            # Apply name mapping if necessary
-            normalized_country = name_mapping.get(country, country)
-            all_countries.append(normalized_country)
+            # Keep original names from T2 Master.xlsx
+            all_countries.append(country)
             
         print(f"Total countries to include: {len(all_countries)}")
         
@@ -386,8 +384,21 @@ def write_final_country_weights():
         
         # Update weights for countries based on the algorithm calculations
         for country, weight in country_weight_dict.items():
-            # Find the country in our DataFrame (case-insensitive match)
+            # Try direct case-insensitive match first
             match_idx = all_weights_df[all_weights_df['Country'].str.lower() == country.lower()].index
+            
+            # If no direct match, handle ChinaH/Hong Kong name variations
+            # These are the same country but may have different names in different data sources
+            if len(match_idx) == 0:
+                # Check if country from algorithm is ChinaH or Hong Kong
+                country_lower = country.lower()
+                if country_lower in ['chinah', 'hong kong']:
+                    # Try to match to either ChinaH or Hong Kong in T2 Master
+                    for master_country in all_countries:
+                        if master_country.lower() in ['chinah', 'hong kong']:
+                            match_idx = all_weights_df[all_weights_df['Country'] == master_country].index
+                            break
+            
             if len(match_idx) > 0:
                 all_weights_df.loc[match_idx[0], 'Weight'] = weight
             else:

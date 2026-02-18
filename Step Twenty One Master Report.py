@@ -186,7 +186,7 @@ class PdfMergeAdapter:
             import pypdf as _pypdf  # type: ignore
 
             self.backend = "pypdf"
-            self._merger = _pypdf.PdfMerger()
+            self._merger = _pypdf.PdfWriter()
             self._reader_cls = _pypdf.PdfReader
             return
         except Exception:

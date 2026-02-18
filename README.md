@@ -18,7 +18,8 @@ graph TD
     H --> I[Step 6: Correlation Analysis]
     I --> J[Step 7: Visualization]
     J --> K[Step 8: Optimization]
-    K --> L[Step 9: Portfolio Returns]
+    K --> K2[Step 8.5: US Adjustment]
+    K2 --> L[Step 9: Portfolio Returns]
     L --> M[Step 10: Final Report]
     M --> N[Step 14: Regime Analysis]
     N --> O[Step 15: Market Regime Analysis]
@@ -132,6 +133,14 @@ graph TD
   - Minimizes turnover while maximizing alpha
   - Applies risk constraints
 - **Outputs**: `step8_output.csv` - Optimized portfolio weights
+
+### Step 8.5: US Weight Adjustment (`Step Eight Point Five Write Country Weights US Adjustment.py`)
+**Purpose**: Adjusts the US weight in the country portfolio based on US Alpha
+- **Inputs**: `T2_Final_Country_Weights.xlsx`, `T2_Country_Alphas.xlsx`
+- **Processing**: 
+  - Adjusts US weight: New US Weight = 25% + (50% * US Alpha)
+  - Rescales other countries proportionally to maintain 100% total weight
+- **Outputs**: `T2_Final_Country_Weights.xlsx` (updated), `T2_Country_Final.xlsx`
 
 ### Step 9: Portfolio Returns (`Step Nine Portfolio Returns.py`)
 **Purpose**: Calculates portfolio returns and performance metrics
@@ -264,6 +273,7 @@ python Step\ Five\ Point\ Three\ Create\ Alphas.py
 python Step\ Six\ Correlation\ Analysis.py
 python Step\ Seven\ Visualize\ Factor\ Weights.py
 python Step\ Eight\ Optimization.py
+python Step\ Eight\ Point\ Five\ Write\ Country\ Weights\ US\ Adjustment.py
 python Step\ Nine\ Portfolio\ Returns.py
 python Step\ Ten\ Final\ Report.py
 python Step\ Fourteen\ Market\ Regime\ Analysis.py

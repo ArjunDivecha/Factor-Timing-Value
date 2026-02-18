@@ -12,7 +12,7 @@ INPUT FILES:
     - Contains latest optimized country weights. Columns: 'Country', 'Weight' (or similar).
 
 OUTPUT FILES:
-- T2_FINAL_T60.xlsx
+- T2_FINAL_T60_VALUE.xlsx
     - Sheet: 'Latest_Country_Alpha_Weights' (columns: Country, Country Alpha, Country Weight)
 
 VERSION: 1.1
@@ -31,7 +31,7 @@ import os
 # --- File names (local only) ---
 ALPHAS_FILE = 'T2_Country_Alphas.xlsx'
 WEIGHTS_FILE = 'T2_Optimized_Country_Weights.xlsx'
-OUTPUT_FILE = 'T2_FINAL_T60.xlsx'
+OUTPUT_FILE = 'T2_FINAL_T60_VALUE.xlsx'
 
 def main():
     # Check input files exist

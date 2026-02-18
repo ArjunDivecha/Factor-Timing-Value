@@ -101,7 +101,7 @@ def load_data():
     logging.info("Loading data for market regime analysis...")
     
     # Load optimized strategy returns and equal weight benchmark
-    returns_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Optimized_Country_Weights.xlsx'
+    returns_file = 'T2_Optimized_Country_Weights.xlsx'
     returns_df = pd.read_excel(returns_file, sheet_name='Monthly_Returns', index_col=0)
     returns_df.index = pd.to_datetime(returns_df.index)
     
@@ -115,7 +115,7 @@ def load_data():
     logging.info(f"Loaded market returns for regime classification: {len(market_returns)} periods")
     
     # Load individual factor exposures for attribution analysis
-    exposure_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Top_20_Exposure.csv'
+    exposure_file = 'T2_Top_20_Exposure.csv'
     factor_exposures = pd.read_csv(exposure_file)
     factor_exposures['Date'] = pd.to_datetime(factor_exposures['Date'])
     logging.info(f"Loaded factor exposures: {factor_exposures.shape[0]} observations, {len(factor_exposures.columns)-2} factors")
@@ -501,7 +501,7 @@ def create_market_regime_visualizations(regime_df, performance_stats, factor_ana
     plt.tight_layout()
     
     # Save visualization
-    output_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Market_Condition_Analysis.pdf'
+    output_file = 'T2_Market_Condition_Analysis.pdf'
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -516,7 +516,7 @@ def save_market_regime_results(regime_df, performance_stats, factor_analysis):
         performance_stats: Performance statistics by regime
         factor_analysis: Factor analysis by regime
     """
-    output_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Market_Condition_Analysis.xlsx'
+    output_file = 'T2_Market_Condition_Analysis.xlsx'
     
     logging.info(f"Saving market regime analysis results to {output_file}")
     
@@ -582,7 +582,7 @@ def save_regime_analysis_results(regime_df, regime_factor_stats, factor_summary,
         factor_summary: Individual factor analysis by regime
         temporal_analysis: Temporal pattern analysis
     """
-    output_file = '/Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Market_Regime_Analysis.xlsx'
+    output_file = 'T2_Market_Regime_Analysis.xlsx'
     
     logging.info(f"Saving market regime analysis results to {output_file}")
     

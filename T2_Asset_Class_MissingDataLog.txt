@@ -3,73 +3,73 @@ Missing country mappings and replacements (mean imputation):
 Data completeness (nonzero count by country):
 
 Optimized Portfolio:
-Singapore: 303
-Australia: 285
-Canada: 284
-Germany: 301
+Singapore: 309
+Australia: 309
+Canada: 280
+Germany: 295
 Japan: 298
-Switzerland: 281
-U.K.: 297
-NASDAQ: 302
-U.S.: 306
-France: 301
-Netherlands: 301
-Sweden: 299
+Switzerland: 277
+U.K.: 296
+NASDAQ: 307
+U.S.: 311
+France: 291
+Netherlands: 298
+Sweden: 287
 Italy: 301
-ChinaA: 295
-Chile: 290
-Indonesia: 303
-Philippines: 300
-Poland: 299
-US SmallCap: 293
-Malaysia: 305
-Taiwan: 303
-Mexico: 304
+ChinaA: 287
+Chile: 312
+Indonesia: 309
+Philippines: 309
+Poland: 302
+US SmallCap: 307
+Malaysia: 292
+Taiwan: 309
+Mexico: 311
 Korea: 305
-Brazil: 304
-South Africa: 304
-Denmark: 286
-India: 299
-ChinaH: 301
-Hong Kong: 304
-Thailand: 303
-Turkey: 303
-Spain: 305
-Vietnam: 296
-Saudi Arabia: 283
+Brazil: 312
+South Africa: 309
+Denmark: 302
+India: 301
+ChinaH: 306
+Hong Kong: 312
+Thailand: 307
+Turkey: 302
+Spain: 304
+Vietnam: 286
+Saudi Arabia: 261
 
 Final Portfolio:
-Singapore: 179
-Australia: 138
-Canada: 150
-Germany: 165
-Japan: 201
-Switzerland: 133
-U.K.: 167
-NASDAQ: 199
-U.S.: 305
-France: 164
-Netherlands: 147
-Sweden: 185
-Italy: 207
-ChinaA: 168
-Chile: 196
-Indonesia: 188
-Philippines: 203
-Poland: 212
-US SmallCap: 182
-Malaysia: 176
-Taiwan: 170
-Mexico: 220
-Korea: 153
-Brazil: 194
-South Africa: 188
-Denmark: 198
-India: 138
-ChinaH: 185
-Hong Kong: 245
-Thailand: 140
-Turkey: 232
-Spain: 182
-Vietnam: 144
-Saudi Arabia: 102
+Singapore: 157
+Australia: 110
+Canada: 122
+Germany: 142
+Japan: 176
+Switzerland: 93
+U.K.: 142
+NASDAQ: 175
+U.S.: 310
+France: 108
+Netherlands: 123
+Sweden: 164
+Italy: 184
+ChinaA: 142
+Chile: 188
+Indonesia: 182
+Philippines: 169
+Poland: 207
+US SmallCap: 155
+Malaysia: 149
+Taiwan: 133
+Mexico: 202
+Korea: 165
+Brazil: 173
+South Africa: 166
+Denmark: 155
+India: 102
+ChinaH: 179
+Hong Kong: 210
+Thailand: 120
+Turkey: 234
+Spain: 160
+Vietnam: 116
+Saudi Arabia: 69
