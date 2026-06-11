@@ -1,24 +1,30 @@
 """
-Feature-to-Country Weight Conversion Program
-===========================================
+Feature-to-Country Weight Conversion (Long–Short)
+=================================================
 
-This program converts feature importance weights from a machine learning model into 
-country-specific investment weights for stock market forecasting. The system processes
-monthly feature weights and factor data to generate country-level investment allocations.
+Converts optimized factor weights (net, can be negative) into country-level
+allocations using fuzzy Top 15–25% selection per factor and date. Negative factor
+weights map to the bottom countries (short side). Vectorized implementation for speed.
 
-Version: 1.4
-Last Updated: 2025-07-18
+Version: 3.0 (Long–Short, vectorized, optimized)
+Last Updated: 2026-04-20
+Author: Claude Code (optimized for speed)
+
+OPTIMIZATIONS:
+- Vectorized numpy operations for per-date processing
+- Pre-grouped data by date for efficient slicing
+- No inner loops over countries for speed
 
 INPUT FILES
 ==========
 1. "T2_rolling_window_weights.xlsx"
    - Location: Same directory as script
    - Format: Excel file
-   - Content: Feature weights from machine learning model
+    - Content: Optimized factor weights (Net_Weights preferred)
    - Structure:
      * Rows: Dates (index)
      * Columns: Feature names
-     * Values: Feature importance weights
+     * Values: Net factor weights (negative allowed)
 
 2. "Normalized_T2_MasterCSV.csv"
    - Location: Same directory as script
@@ -40,10 +46,10 @@ OUTPUT FILES
 1. "T2_Final_Country_Weights.xlsx"
    - Format: Excel workbook with multiple sheets
    - Sheets:
-     a. "All Periods": Complete time series of country weights
+     a. "All Periods": Complete time series of net country weights (can be negative)
         * Rows: Dates
         * Columns: Countries
-        * Values: Investment weights (0-1)
+        * Values: Net investment weights (sum ≈ 1.0 per date)
      b. "Summary Statistics": Statistical analysis
         * Metrics: Mean, standard deviation, min, max, etc.
         * Rows: Statistics
@@ -62,23 +68,12 @@ OUTPUT FILES
 
 METHODOLOGY
 ==========
-1. Data Loading and Preparation:
-   - Load feature weights and normalized factor data
-   - Identify all unique countries and dates
-   - Initialize weight tracking structures
-
-2. Weight Calculation (per date) - FUZZY LOGIC APPROACH:
-   a. For each date's model:
-      - Identify significant features (non-zero weights)
-      - For each significant feature:
-        * Rank countries by feature values (high-to-low)
-        * Apply fuzzy logic weighting:
-          - Top 15% countries: Full weight (1.0)
-          - 15-25% countries: Linearly decreasing weight (1.0 to 0.0)
-          - Bottom 75% countries: Zero weight
-        * Normalize weights to sum to 1 for equal capital allocation
-        * Distribute feature's weight proportionally among selected countries
-      - Sum weights across all features for final country allocations
+1) For each date: pivot factor exposures to Countries×Factors; compute rank percentiles
+   both descending and ascending.
+2) For a positive factor weight: use descending ranks; for a negative weight: ascending
+   ranks (i.e., bottom countries).
+3) Apply fuzzy band (full weight <15%; linear taper 15–25%). Column-normalize to sum 1.
+4) Multiply by factor weights (with sign) and sum across factors to net country weights.
 
 3. Output Generation:
    - Create comprehensive Excel workbook with multiple analysis views
@@ -110,11 +105,9 @@ VERSION HISTORY
 
 NOTES
 =====
-- All weights are normalized to sum to 1 (100%) for each date
-- Uses fuzzy logic with soft 15-25% linear taper (not hard 20% cutoff)
-- Top 15% countries get full weight, 15-25% get linearly decreasing weight
-- Weights are normalized per feature to ensure equal capital allocation
-- Excel output uses xlsxwriter for formatting and styling
+- Net country weights may be negative (short). Net sum per date ≈ 1.0.
+- Uses fuzzy 15–25% taper per factor; column-normalized within factor before applying sign.
+- Vectorized per-date pipeline for speed (no inner loops over countries).
 """
 
 import pandas as pd
@@ -139,8 +132,28 @@ weights_file = "T2_rolling_window_weights.xlsx"
 factor_file = "Normalized_T2_MasterCSV.csv"
 
 print("Loading data...")
-# Load feature weights from optimization model
-feature_weights_df = pd.read_excel(weights_file, index_col=0)
+# Load feature weights from optimization model (prefer Net_Weights sheet for long–short)
+try:
+    feature_weights_df = pd.read_excel(weights_file, sheet_name='Net_Weights', index_col=0)
+except Exception:
+    feature_weights_df = pd.read_excel(weights_file, index_col=0)
+
+# -------------------------------------------------------------------
+# VINTAGE ALIGNMENT WITH STEP FIVE
+# Step Five pairs factor weights chosen at month t with the factor-return
+# row at t+1 (portfolios formed from month t+1 scores). To replicate that
+# at the country level, country weights stamped at date d must be built
+# from the PRIOR month's factor weights combined with date-d scores.
+# Shifting the weights frame forward one row achieves this (the index is
+# monthly contiguous). The first date is dropped (no prior vintage); the
+# extra-month optimization row becomes usable next month when new scores
+# arrive.
+# -------------------------------------------------------------------
+feature_weights_df = feature_weights_df.sort_index()
+feature_weights_df = feature_weights_df.shift(1).iloc[1:]
+print(f"Applied one-month vintage shift: weights at date d now come from d-1 "
+      f"({feature_weights_df.index[0].strftime('%Y-%m')} to "
+      f"{feature_weights_df.index[-1].strftime('%Y-%m')})")
 
 # Load factor data for all countries
 factor_df = pd.read_csv(factor_file)
@@ -187,78 +200,69 @@ all_weights = all_weights.fillna(0.0)  # Start with zero weights
 # WEIGHT CALCULATION PROCESS
 # ===============================
 
-print("\nProcessing all dates...")
-# Process each date in the all_dates list
-for date in tqdm(all_dates):
-    # Initialize weights for all countries on this date
-    country_weights = {country: 0.0 for country in all_countries}
-    
-    # Convert to datetime if it's not already
-    if not isinstance(date, pd.Timestamp):
-        date_dt = pd.to_datetime(date)
-    else:
-        date_dt = date
-    
-    # Use the CURRENT date for feature weights instead of previous date
-    # Skip if the current date is not in the feature weights index
+print("\nProcessing all dates (vectorized per date)...")
+
+# Group factor data by date for efficient slicing
+by_date = factor_df.groupby('date')
+
+def calculate_country_contributions_for_date(date_dt):
     if date_dt not in feature_weights_df.index:
-        print(f"Skipping {date} - date not available in feature weights")
+        return None, None
+
+    w = feature_weights_df.loc[date_dt].astype(float)
+    w = w[w.abs() > 1e-10]
+    if w.empty:
+        return None, None
+
+    try:
+        slice_df = by_date.get_group(date_dt)
+    except KeyError:
+        return None, None
+
+    pivot = slice_df.pivot(index='country', columns='variable', values='value')
+    common_factors = pivot.columns.intersection(w.index)
+    if len(common_factors) == 0:
+        return None, None
+
+    V = pivot[common_factors]
+    w_vec = w.loc[common_factors]
+
+    rank_desc = V.rank(axis=0, method='first', ascending=False)
+    rank_asc = V.rank(axis=0, method='first', ascending=True)
+    counts = V.notna().sum(axis=0).replace(0, np.nan)
+
+    counts_mat = np.tile(counts.values, (len(V.index), 1))
+    rank_desc_pct = rank_desc.values / counts_mat
+    rank_asc_pct = rank_asc.values / counts_mat
+
+    pos_mask = (w_vec.values > 0).astype(float)
+    pos_mask_mat = np.tile(pos_mask, (len(V.index), 1))
+    rank_pct = np.where(pos_mask_mat > 0, rank_desc_pct, rank_asc_pct)
+
+    full_mask = (rank_pct < SOFT_BAND_TOP).astype(float)
+    in_band = (rank_pct >= SOFT_BAND_TOP) & (rank_pct <= SOFT_BAND_CUTOFF)
+    taper = 1.0 - (rank_pct - SOFT_BAND_TOP) / (SOFT_BAND_CUTOFF - SOFT_BAND_TOP)
+    taper = np.where(in_band, taper, 0.0)
+    fuzzy = full_mask + taper
+
+    col_sums = fuzzy.sum(axis=0)
+    col_sums[col_sums == 0] = 1.0
+    fuzzy_norm = fuzzy / col_sums
+
+    w_mat = np.tile(w_vec.values, (len(V.index), 1))
+    contrib = fuzzy_norm * w_mat
+    contributions_df = pd.DataFrame(contrib, index=V.index, columns=common_factors)
+    country_weights = contributions_df.sum(axis=1)
+
+    return country_weights, contributions_df
+
+for date in tqdm(all_dates):
+    # Ensure Timestamp type to index the groupby
+    date_dt = pd.to_datetime(date)
+    country_weights, _ = calculate_country_contributions_for_date(date_dt)
+    if country_weights is None:
         continue
-    
-    # Get feature weights from the CURRENT date
-    date_weights = feature_weights_df.loc[date_dt]
-    
-    # Filter out features with negligible weights (numerical stability)
-    significant_weights = date_weights[date_weights.abs() > 1e-10]
-    
-    # Process each feature that has a significant weight
-    for feature, feature_weight in significant_weights.items():
-        # Get data for this feature and CURRENT date across all countries
-        feature_data = factor_df[
-            (factor_df['date'] == date) & 
-            (factor_df['variable'] == feature)
-        ].copy()
-        
-        # Skip if no data available for this feature/date
-        if feature_data.empty:
-            continue
-            
-        # FUZZY LOGIC IMPLEMENTATION (Same as Steps 3 and 4)
-        # Rank by factor (high-to-low)
-        feature_data = feature_data.sort_values('value', ascending=False).reset_index(drop=True)
-        feature_data['rank_pct'] = (feature_data.index + 1) / len(feature_data)  # 0-1 percentile rank
-        
-        # Linear weights using fuzzy logic
-        in_band = (feature_data['rank_pct'] >= SOFT_BAND_TOP) & (feature_data['rank_pct'] <= SOFT_BAND_CUTOFF)
-        feature_data['weight'] = 0.0
-        
-        # Full weight for top band (< 15%)
-        feature_data.loc[feature_data['rank_pct'] < SOFT_BAND_TOP, 'weight'] = 1.0
-        
-        # Linearly decreasing weight inside the grey band (15% - 25%)
-        feature_data.loc[in_band, 'weight'] = (
-            1.0 - (feature_data.loc[in_band, 'rank_pct'] - SOFT_BAND_TOP)
-                  / (SOFT_BAND_CUTOFF - SOFT_BAND_TOP)
-        )
-        
-        # Remove zero-weight rows for efficiency
-        feature_data = feature_data[feature_data['weight'] > 0]
-        
-        if feature_data.empty:
-            continue
-        
-        # Normalize weights to sum to 1 (equal total capital allocation per feature)
-        feature_data['weight'] /= feature_data['weight'].sum()
-        
-        # Apply feature weight and distribute to countries
-        for _, row in feature_data.iterrows():
-            country = row['country']
-            country_weight = feature_weight * row['weight']
-            country_weights[country] += country_weight
-    
-    # Store calculated weights for this date
-    for country, weight in country_weights.items():
-        all_weights.loc[date, country] = weight
+    all_weights.loc[date, country_weights.index] = country_weights.values
 
 # ===============================
 # VALIDATION AND ANALYSIS
@@ -285,7 +289,7 @@ with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
         'Std Dev': all_weights.std(),
         'Min Weight': all_weights.min(),
         'Max Weight': all_weights.max(),
-        'Days with Weight': (all_weights > 0).sum()
+        'Days with Weight': (all_weights.abs() > 0).sum()
     }).sort_values('Mean Weight', ascending=False)
     
     summary_stats.to_excel(writer, sheet_name='Summary Statistics')
@@ -298,7 +302,7 @@ with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
         latest_weights = pd.DataFrame({
             'Weight': all_weights.loc[latest_valid_date],
             'Average Weight': all_weights.mean(),
-            'Days with Weight': (all_weights > 0).sum(),
+            'Days with Weight': (all_weights.abs() > 0).sum(),
             'Latest Date': pd.Series([latest_valid_date] * len(all_weights.columns), index=all_weights.columns)
         }).sort_values('Weight', ascending=False)
         print(f"\nUsing {latest_valid_date} as the latest valid date with non-zero weights")
@@ -307,7 +311,7 @@ with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
         latest_weights = pd.DataFrame({
             'Weight': all_weights.iloc[-1],
             'Average Weight': all_weights.mean(),
-            'Days with Weight': (all_weights > 0).sum()
+            'Days with Weight': (all_weights.abs() > 0).sum()
         }).sort_values('Weight', ascending=False)
     
     latest_weights.to_excel(writer, sheet_name='Latest Weights')
@@ -346,16 +350,11 @@ def write_final_country_weights():
     # Get weights for the latest date
     latest_weights = all_weights.loc[latest_valid_date]
     
-    # Create a dictionary of country weights from algorithm results
-    # Filter to include only countries with non-zero weights
-    country_weight_dict = {}
-    for country, weight in latest_weights.items():
-        if weight > 0:
-            country_weight_dict[country] = weight
-    
-    print(f"Found {len(country_weight_dict)} countries with non-zero weights")
+    # Create a dictionary of country weights from algorithm results (include negatives)
+    country_weight_dict = latest_weights.to_dict()
+    print(f"Found {len(country_weight_dict)} countries in latest weights")
     total = sum(country_weight_dict.values())
-    print(f"Total weight: {total:.4f}")
+    print(f"Total net weight: {total:.4f}")
     
     # Read original country order from T2 Master.xlsx
     try:
@@ -367,12 +366,8 @@ def write_final_country_weights():
         country_columns = list(master_df.columns[1:])  # Skip the first column which is 'Country' (dates)
         print(f"Found {len(country_columns)} countries in column headers")
         
-        # Create a full list of country names - keep original names from T2 Master.xlsx
-        all_countries = []
-        
-        for country in country_columns:
-            # Keep original names from T2 Master.xlsx
-            all_countries.append(country)
+        # Create a full list of country names (keep original names from T2 Master)
+        all_countries = list(country_columns)  # Use original column names as-is
             
         print(f"Total countries to include: {len(all_countries)}")
         
@@ -383,29 +378,25 @@ def write_final_country_weights():
         })
         
         # Update weights for countries based on the algorithm calculations
+        # Map algorithm country names to T2 Master names if needed
+        algorithm_to_master_mapping = {}  # Add mappings here if algorithm uses different names
+        
         for country, weight in country_weight_dict.items():
-            # Try direct case-insensitive match first
+            # First try direct match (case-insensitive)
             match_idx = all_weights_df[all_weights_df['Country'].str.lower() == country.lower()].index
-            
-            # If no direct match, handle ChinaH/Hong Kong name variations
-            # These are the same country but may have different names in different data sources
-            if len(match_idx) == 0:
-                # Check if country from algorithm is ChinaH or Hong Kong
-                country_lower = country.lower()
-                if country_lower in ['chinah', 'hong kong']:
-                    # Try to match to either ChinaH or Hong Kong in T2 Master
-                    for master_country in all_countries:
-                        if master_country.lower() in ['chinah', 'hong kong']:
-                            match_idx = all_weights_df[all_weights_df['Country'] == master_country].index
-                            break
-            
             if len(match_idx) > 0:
                 all_weights_df.loc[match_idx[0], 'Weight'] = weight
             else:
-                print(f"Note: Country '{country}' with weight {weight:.4f} not found in T2 Master.xlsx")
-                # Add it to the end with its weight
-                new_row = pd.DataFrame({'Country': [country], 'Weight': [weight]})
-                all_weights_df = pd.concat([all_weights_df, new_row], ignore_index=True)
+                # Try mapping if algorithm uses different name
+                mapped_name = algorithm_to_master_mapping.get(country, country)
+                match_idx = all_weights_df[all_weights_df['Country'].str.lower() == mapped_name.lower()].index
+                if len(match_idx) > 0:
+                    all_weights_df.loc[match_idx[0], 'Weight'] = weight
+                else:
+                    print(f"Note: Country '{country}' with weight {weight:.4f} not found in T2 Master.xlsx")
+                    # Add it to the end with its weight
+                    new_row = pd.DataFrame({'Country': [country], 'Weight': [weight]})
+                    all_weights_df = pd.concat([all_weights_df, new_row], ignore_index=True)
         
         # Result is already sorted in the original order from T2 Master.xlsx
         sorted_weights = all_weights_df
@@ -418,57 +409,12 @@ def write_final_country_weights():
         sorted_weights = pd.DataFrame(list(country_weight_dict.items()), 
                                   columns=['Country', 'Weight'])
         
-    # Calculate per-factor country contributions for the latest date
     print("\nCalculating per-factor country contributions for latest date ...")
-    date_feature_weights = feature_weights_df.loc[latest_valid_date]
-    significant_feature_weights = date_feature_weights[date_feature_weights.abs() > 1e-10]
-    factor_list = significant_feature_weights.index.tolist()
-    print(f"Found {len(factor_list)} factors with non-zero weights on {latest_valid_date}.")
-
-    # Use the actual countries from the factor data for this date to ensure consistency
-    actual_countries_for_date = factor_df[factor_df['date'] == latest_valid_date]['country'].unique()
-    contributions_df = pd.DataFrame(0.0, index=actual_countries_for_date, columns=factor_list)
-
-    for feature, f_weight in significant_feature_weights.items():
-        feat_data = factor_df[(factor_df['date'] == latest_valid_date) & (factor_df['variable'] == feature)]
-        if feat_data.empty:
-            continue  # no data available
-            
-        # FUZZY LOGIC IMPLEMENTATION (Same as main loop)
-        # Rank by factor (high-to-low)
-        feat_data = feat_data.sort_values('value', ascending=False).reset_index(drop=True)
-        feat_data['rank_pct'] = (feat_data.index + 1) / len(feat_data)  # 0-1 percentile rank
-        
-        # Linear weights using fuzzy logic
-        in_band = (feat_data['rank_pct'] >= SOFT_BAND_TOP) & (feat_data['rank_pct'] <= SOFT_BAND_CUTOFF)
-        feat_data['weight'] = 0.0
-        
-        # Full weight for top band (< 15%)
-        feat_data.loc[feat_data['rank_pct'] < SOFT_BAND_TOP, 'weight'] = 1.0
-        
-        # Linearly decreasing weight inside the grey band (15% - 25%)
-        feat_data.loc[in_band, 'weight'] = (
-            1.0 - (feat_data.loc[in_band, 'rank_pct'] - SOFT_BAND_TOP)
-                  / (SOFT_BAND_CUTOFF - SOFT_BAND_TOP)
-        )
-        
-        # Remove zero-weight rows for efficiency
-        feat_data = feat_data[feat_data['weight'] > 0]
-        
-        if feat_data.empty:
-            continue
-        
-        # Normalize weights to sum to 1 (equal total capital allocation per feature)
-        feat_data['weight'] /= feat_data['weight'].sum()
-        
-        # Apply feature weight and distribute to countries
-        for _, row in feat_data.iterrows():
-            country = row['country']
-            country_weight = f_weight * row['weight']
-            if country in contributions_df.index:
-                contributions_df.loc[country, feature] += country_weight
-            else:
-                print(f"Warning: Country '{country}' not found in contributions DataFrame index")
+    latest_country_weights, contributions_df = calculate_country_contributions_for_date(latest_valid_date)
+    if contributions_df is None:
+        print("Error: Unable to calculate per-factor country contributions for latest date")
+        return
+    print(f"Found {len(contributions_df.columns)} factors with non-zero weights on {latest_valid_date}.")
 
     # Validate contributions by comparing only countries that exist in both DataFrames
     contributions_sum = contributions_df.sum(axis=1)
@@ -485,7 +431,7 @@ def write_final_country_weights():
     contributions_df = contributions_df[factor_totals.index]
     
     # Merge factor contributions into sorted_weights to create final output
-    contributions_reset = contributions_df.reset_index().rename(columns={'index': 'Country'})
+    contributions_reset = contributions_df.reset_index().rename(columns={'index': 'Country', 'country': 'Country'})
     final_df = pd.merge(sorted_weights, contributions_reset, on='Country', how='left')
     final_df = final_df.fillna(0.0)
     

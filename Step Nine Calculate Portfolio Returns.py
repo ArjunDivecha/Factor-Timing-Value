@@ -1,6 +1,6 @@
 """
-T2 Factor Timing - Step Nine: Calculate Portfolio Returns
-======================================================
+T2 Factor Timing - Step Nine: Calculate Portfolio Returns (Long–Short)
+=====================================================================
 
 PURPOSE:
 Calculates and analyzes the performance of a country-weighted investment portfolio by applying
@@ -8,10 +8,16 @@ country weights to historical returns data. This is a critical performance measu
 that validates the T2 Factor Timing strategy against an equal-weight benchmark.
 
 IMPORTANT NOTES:
-- Implements forward-looking bias protection by applying month t weights to month t+1 returns
+- Returns in Portfolio_Data.xlsx use the FORWARD convention from Step One:
+  row t of the Returns sheet already holds the return earned from month t to t+1
+  (1MRet is built with shift(-1)). Therefore month-t weights are applied to
+  row t directly — adding another one-month shift here would double-lag the
+  signal. The equal-weight benchmark row t uses the same forward convention,
+  so portfolio and benchmark at row t cover the same return month.
 - Handles missing data and edge cases in turnover calculations
 - Generates both detailed Excel reports and publication-quality PDF visualizations
 - All calculations are in local currency (no FX adjustments)
+- Supports long–short: country weights may be negative and are NOT renormalized by |weights|
 
 INPUT FILES:
 1. T2_Final_Country_Weights.xlsx
@@ -20,9 +26,9 @@ INPUT FILES:
    - Structure:
      * Index: Dates (datetime64[ns])
      * Columns: 3-letter country codes (str)
-     * Values: Portfolio weights (float, 0-1)
+     * Values: Net portfolio weights (float, can be negative)
    - Notes:
-     * Weights should sum to 1.0 for each date
+     * Net weights typically sum ≈ 1.0 per date
      * Must include all countries in Portfolio_Data.xlsx
 
 2. Portfolio_Data.xlsx
@@ -74,8 +80,9 @@ OUTPUT FILES:
 
 METHODOLOGY:
 1. Portfolio Construction:
-   - Weights from month t are applied to returns in month t+1
-   - All portfolios are fully invested (sum of weights = 1.0)
+   - Weights from month t are applied to returns row t, which (forward
+     convention) is the return earned from month t to t+1 — no look-ahead.
+   - Net returns computed as Σ w_net × r (no renormalization by |weights|)
    - Missing returns are treated as 0 (no impact)
 
 2. Performance Metrics:
@@ -114,8 +121,15 @@ DEPENDENCIES:
 
 MISSING DATA HANDLING:
 - Analysis is restricted to dates common to both weights and returns datasets
-- Last month is excluded due to not having future returns available
+- Rows whose forward returns are all-NaN (the most recent stub month) drop out
+  naturally because the return row is empty
 - No explicit imputation is performed in this script
+
+VERSION HISTORY (continued):
+- 1.3 (2026-06-09): Fixed double-lag bug — weights at month t are now applied
+  to returns row t (already forward t→t+1 per Step One convention) instead of
+  row t+1, and the equal-weight benchmark is taken from the same row so
+  portfolio and benchmark cover the same return month.
 """
 
 # Missing data handling implementation
@@ -165,19 +179,20 @@ returns_df.index = returns_df.index.to_period('M').to_timestamp()  # Standardize
 benchmark_df.index = pd.to_datetime(benchmark_df.index)
 benchmark_df.index = benchmark_df.index.to_period('M').to_timestamp()  # Standardize to month-end
 
-# Shift returns forward by one month to use future month returns
-# This ensures we're using weights from current month to predict next month's returns
-returns_df_shifted = returns_df.copy()  # No shift, align weights and returns to same month
-benchmark_df_shifted = benchmark_df.copy()  # No shift
+# NOTE on timing: Portfolio_Data.xlsx returns use the FORWARD convention
+# (Step One builds 1MRet with shift(-1)), so row t already holds the return
+# earned from month t to t+1. Month-t weights are therefore applied to row t
+# directly. Shifting to row t+1 here would double-lag the signal.
 
 # Find common dates between weights and returns datasets
 # We need dates that exist in both weights and returns datasets
 weights_dates = set(weights_df.index)
-returns_dates = set(returns_df.index)  # Use unshifted returns for date alignment
+returns_dates = set(returns_df.index)
 common_dates = sorted(list(weights_dates.intersection(returns_dates)))
 
-# Remove the last date since it will have NaN returns after shifting forward
-if len(common_dates) > 0:
+# Drop trailing dates whose forward returns are entirely missing
+# (the most recent month is a stub with no realized t -> t+1 return yet)
+while common_dates and returns_df.loc[common_dates[-1]].isna().all():
     common_dates = common_dates[:-1]
 
 # Use all available dates with weights and returns - don't filter based on a fixed date
@@ -199,32 +214,27 @@ for i, date in enumerate(common_dates):
     # Get weights for this date
     weights = weights_df.loc[date]
     
-    # Get returns for this same date (which are already next month's returns in the original data)
-    next_returns = returns_df.loc[date]
+    # Returns row t already holds the forward return t -> t+1 (Step One
+    # convention), so apply month-t weights to row t. No extra shift.
+    forward_returns = returns_df.loc[date]
     
     # Calculate weighted return for this date
     # Only use countries that have both weights and returns data
-    common_countries = set(weights.index).intersection(next_returns.index)
+    common_countries = set(weights.index).intersection(forward_returns.index)
     
     # Skip if no common countries
     if len(common_countries) == 0:
         portfolio_returns[i] = np.nan
         continue
     
-    # Calculate weighted return
-    weighted_return = 0
-    total_weight = 0
-    
+    # Calculate weighted return (supports long–short). Do NOT renormalize by total weight.
+    weighted_return = 0.0
     for country in common_countries:
-        if not np.isnan(next_returns[country]) and weights[country] > 0:
-            weighted_return += weights[country] * next_returns[country]
-            total_weight += weights[country]
-    
-    # Normalize by total weight to account for missing data
-    if total_weight > 0:
-        portfolio_returns[i] = weighted_return / total_weight
-    else:
-        portfolio_returns[i] = np.nan
+        w = weights[country]
+        r = forward_returns[country]
+        if not np.isnan(w) and not np.isnan(r):
+            weighted_return += w * r
+    portfolio_returns[i] = weighted_return
 
 # ===============================
 # TURNOVER CALCULATION

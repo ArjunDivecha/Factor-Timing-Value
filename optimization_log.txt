@@ -1,55 +1,214 @@
-2026-02-17 14:41:12,808 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
-2026-02-17 14:41:12,808 - INFO - Loading data for GMM regime analysis...
-2026-02-17 14:41:12,909 - INFO - Successfully loaded 312 monthly returns.
-2026-02-17 14:41:12,909 - INFO - Successfully loaded 10642 factor exposure records.
-2026-02-17 14:41:12,909 - INFO - Creating features for regime detection...
-2026-02-17 14:41:12,910 - INFO - Created feature set with 300 observations and 5 features.
-2026-02-17 14:41:12,910 - INFO - Finding optimal number of regimes using GMM and BIC...
-2026-02-17 14:41:12,987 - INFO - Tested 2 regimes, BIC: 3928.42
-2026-02-17 14:41:13,028 - INFO - Tested 3 regimes, BIC: 3789.58
-2026-02-17 14:41:13,078 - INFO - Tested 4 regimes, BIC: 3788.40
-2026-02-17 14:41:13,129 - INFO - Tested 5 regimes, BIC: 3850.98
-2026-02-17 14:41:13,220 - INFO - Tested 6 regimes, BIC: 3791.16
-2026-02-17 14:41:13,220 - INFO - Optimal number of regimes found: 4
-2026-02-17 14:41:13,220 - INFO - Analyzing and labeling regimes...
-2026-02-17 14:41:13,222 - INFO - Assigned descriptive labels to regimes.
-2026-02-17 14:41:13,225 - INFO - 
+2026-06-10 14:38:53,958 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
+2026-06-10 14:38:53,959 - INFO - Loading data for GMM regime analysis...
+2026-06-10 14:38:54,068 - INFO - Successfully loaded 314 monthly returns.
+2026-06-10 14:38:54,068 - INFO - Successfully loaded 10778 factor exposure records.
+2026-06-10 14:38:54,068 - INFO - Creating features for regime detection...
+2026-06-10 14:38:54,070 - INFO - Created feature set with 303 observations and 5 features.
+2026-06-10 14:38:54,070 - INFO - Finding optimal number of regimes using GMM and BIC...
+2026-06-10 14:38:54,152 - INFO - Tested 2 regimes, BIC: 3932.89
+2026-06-10 14:38:54,198 - INFO - Tested 3 regimes, BIC: 3836.52
+2026-06-10 14:38:54,247 - INFO - Tested 4 regimes, BIC: 3841.09
+2026-06-10 14:38:54,299 - INFO - Tested 5 regimes, BIC: 3871.43
+2026-06-10 14:38:54,374 - INFO - Tested 6 regimes, BIC: 3845.05
+2026-06-10 14:38:54,374 - INFO - Optimal number of regimes found: 3
+2026-06-10 14:38:54,375 - INFO - Analyzing and labeling regimes...
+2026-06-10 14:38:54,377 - INFO - Assigned descriptive labels to regimes.
+2026-06-10 14:38:54,379 - INFO - 
 Regime Characteristics:
          Returns  Volatility_3M  Volatility_12M  Skewness_12M  Kurtosis_12M             Label
 Regime                                                                                       
-0      -0.002487       0.149321        0.149737     -0.117801     -0.316273   Low-Vol Bearish
-1       0.019334       0.097716        0.151483      0.885086      1.266292  High-Vol Bullish
-2       0.021572       0.290225        0.272977     -0.471776      0.293532  High-Vol Bullish
-3       0.022997       0.070191        0.150739     -0.986072      1.304999   Low-Vol Bullish
-2026-02-17 14:41:13,225 - INFO - Analyzing strategy performance by regime...
-2026-02-17 14:41:13,228 - INFO - 
+0       0.005607       0.109291        0.130430      0.215656      0.147083   Low-Vol Bullish
+1       0.003707       0.207209        0.209831     -0.198117     -0.162446  High-Vol Bullish
+2       0.022516       0.083694        0.133684     -1.087358      1.610516   Low-Vol Bullish
+2026-06-10 14:38:54,379 - INFO - Analyzing strategy performance by regime...
+2026-06-10 14:38:54,384 - INFO - 
 Performance by Regime:
                   Periods  Annual_Return  Annual_Volatility  Sharpe_Ratio  Win_Rate
 Regime                                                                             
-Low-Vol Bearish       168       0.048821           0.035853      1.361705  0.672619
-High-Vol Bullish       71       0.027123           0.043678      0.620969  0.535211
-Low-Vol Bullish        61       0.005031           0.036063      0.139516  0.475410
-2026-02-17 14:41:13,228 - INFO - Analyzing factor exposures by regime...
-2026-02-17 14:41:13,240 - INFO - 
+High-Vol Bullish      125       0.040287           0.048746      0.826467  0.616000
+Low-Vol Bullish       178       0.018257           0.037917      0.481508  0.589888
+2026-06-10 14:38:54,384 - INFO - Analyzing factor exposures by regime...
+2026-06-10 14:38:54,397 - INFO - 
 Average Factor Exposures by Regime:
-Regime_Label          High-Vol Bullish  Low-Vol Bearish  Low-Vol Bullish
-10Yr Bond 12_CS               0.029412         0.029412         0.029412
-10Yr Bond 12_TS               0.029412         0.029237         0.029412
-10Yr Bond_CS                  0.029412         0.029412         0.029412
-10Yr Bond_TS                  0.029412         0.029412         0.029412
-12-1MTR_CS                    0.029412         0.029412         0.029412
-...                                ...              ...              ...
-Tot Return Index _TS          0.029412         0.029412         0.029412
-Trailing EPS 36_CS            0.026926         0.027311         0.026519
-Trailing EPS 36_TS            0.026926         0.027136         0.026519
-Trailing PE_CS                0.029412         0.029412         0.029412
-Trailing PE_TS                0.029412         0.029412         0.029412
+Regime_Label          High-Vol Bullish  Low-Vol Bullish
+10Yr Bond 12_CS               0.029412         0.029412
+10Yr Bond 12_TS               0.029412         0.029412
+10Yr Bond_CS                  0.029412         0.029412
+10Yr Bond_TS                  0.029412         0.029412
+12-1MTR_CS                    0.029412         0.029412
+...                                ...              ...
+Tot Return Index _TS          0.029412         0.029412
+Trailing EPS 36_CS            0.024941         0.028751
+Trailing EPS 36_TS            0.024706         0.028751
+Trailing PE_CS                0.029412         0.029412
+Trailing PE_TS                0.029412         0.029412
 
-[85 rows x 3 columns]
-2026-02-17 14:41:13,240 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
-2026-02-17 14:41:13,268 - INFO - Excel file saved successfully.
-2026-02-17 14:41:13,268 - INFO - Creating performance visualizations...
-2026-02-17 14:41:13,683 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
-2026-02-17 14:41:13,683 - INFO - Creating factor analysis visualizations...
-2026-02-17 14:41:13,919 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
-2026-02-17 14:41:13,919 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---
+[85 rows x 2 columns]
+2026-06-10 14:38:54,397 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
+2026-06-10 14:38:54,426 - INFO - Excel file saved successfully.
+2026-06-10 14:38:54,426 - INFO - Creating performance visualizations...
+2026-06-10 14:38:54,878 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
+2026-06-10 14:38:54,878 - INFO - Creating factor analysis visualizations...
+2026-06-10 14:38:55,064 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
+2026-06-10 14:38:55,064 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---
+2026-06-10 15:01:13,170 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
+2026-06-10 15:01:13,170 - INFO - Loading data for GMM regime analysis...
+2026-06-10 15:01:13,269 - INFO - Successfully loaded 314 monthly returns.
+2026-06-10 15:01:13,269 - INFO - Successfully loaded 10778 factor exposure records.
+2026-06-10 15:01:13,269 - INFO - Creating features for regime detection...
+2026-06-10 15:01:13,270 - INFO - Created feature set with 303 observations and 5 features.
+2026-06-10 15:01:13,270 - INFO - Finding optimal number of regimes using GMM and BIC...
+2026-06-10 15:01:13,329 - INFO - Tested 2 regimes, BIC: 3932.89
+2026-06-10 15:01:13,373 - INFO - Tested 3 regimes, BIC: 3836.52
+2026-06-10 15:01:13,423 - INFO - Tested 4 regimes, BIC: 3841.09
+2026-06-10 15:01:13,474 - INFO - Tested 5 regimes, BIC: 3871.43
+2026-06-10 15:01:13,549 - INFO - Tested 6 regimes, BIC: 3845.05
+2026-06-10 15:01:13,550 - INFO - Optimal number of regimes found: 3
+2026-06-10 15:01:13,550 - INFO - Analyzing and labeling regimes...
+2026-06-10 15:01:13,553 - INFO - Assigned descriptive labels to regimes.
+2026-06-10 15:01:13,556 - INFO - 
+Regime Characteristics:
+         Returns  Volatility_3M  ...  Kurtosis_12M             Label
+Regime                           ...                                
+0       0.005607       0.109291  ...      0.147083   Low-Vol Bullish
+1       0.003707       0.207209  ...     -0.162446  High-Vol Bullish
+2       0.022516       0.083694  ...      1.610516   Low-Vol Bullish
+
+[3 rows x 6 columns]
+2026-06-10 15:01:13,556 - INFO - Analyzing strategy performance by regime...
+2026-06-10 15:01:13,560 - INFO - 
+Performance by Regime:
+                  Periods  Annual_Return  Annual_Volatility  Sharpe_Ratio  Win_Rate
+Regime                                                                             
+High-Vol Bullish      125       0.030647           0.037323      0.821133  0.584000
+Low-Vol Bullish       178       0.018231           0.036282      0.502485  0.539326
+2026-06-10 15:01:13,560 - INFO - Analyzing factor exposures by regime...
+2026-06-10 15:01:13,574 - INFO - 
+Average Factor Exposures by Regime:
+Regime_Label          High-Vol Bullish  Low-Vol Bullish
+10Yr Bond 12_CS               0.029412         0.029412
+10Yr Bond 12_TS               0.029412         0.029412
+10Yr Bond_CS                  0.029412         0.029412
+10Yr Bond_TS                  0.029412         0.029412
+12-1MTR_CS                    0.029412         0.029412
+...                                ...              ...
+Tot Return Index _TS          0.029412         0.029412
+Trailing EPS 36_CS            0.024941         0.028751
+Trailing EPS 36_TS            0.024706         0.028751
+Trailing PE_CS                0.029412         0.029412
+Trailing PE_TS                0.029412         0.029412
+
+[85 rows x 2 columns]
+2026-06-10 15:01:13,574 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
+2026-06-10 15:01:13,602 - INFO - Excel file saved successfully.
+2026-06-10 15:01:13,602 - INFO - Creating performance visualizations...
+2026-06-10 15:01:14,048 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
+2026-06-10 15:01:14,048 - INFO - Creating factor analysis visualizations...
+2026-06-10 15:01:14,229 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
+2026-06-10 15:01:14,229 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---
+2026-06-10 15:11:39,588 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
+2026-06-10 15:11:39,589 - INFO - Loading data for GMM regime analysis...
+2026-06-10 15:11:39,693 - INFO - Successfully loaded 314 monthly returns.
+2026-06-10 15:11:39,693 - INFO - Successfully loaded 10778 factor exposure records.
+2026-06-10 15:11:39,693 - INFO - Creating features for regime detection...
+2026-06-10 15:11:39,694 - INFO - Created feature set with 303 observations and 5 features.
+2026-06-10 15:11:39,694 - INFO - Finding optimal number of regimes using GMM and BIC...
+2026-06-10 15:11:39,753 - INFO - Tested 2 regimes, BIC: 3932.89
+2026-06-10 15:11:39,800 - INFO - Tested 3 regimes, BIC: 3836.52
+2026-06-10 15:11:39,849 - INFO - Tested 4 regimes, BIC: 3841.09
+2026-06-10 15:11:39,907 - INFO - Tested 5 regimes, BIC: 3871.43
+2026-06-10 15:11:39,987 - INFO - Tested 6 regimes, BIC: 3845.05
+2026-06-10 15:11:39,987 - INFO - Optimal number of regimes found: 3
+2026-06-10 15:11:39,988 - INFO - Analyzing and labeling regimes...
+2026-06-10 15:11:39,990 - INFO - Assigned descriptive labels to regimes.
+2026-06-10 15:11:39,993 - INFO - 
+Regime Characteristics:
+         Returns  Volatility_3M  Volatility_12M  Skewness_12M  Kurtosis_12M             Label
+Regime                                                                                       
+0       0.005607       0.109291        0.130430      0.215656      0.147083   Low-Vol Bullish
+1       0.003707       0.207209        0.209831     -0.198117     -0.162446  High-Vol Bullish
+2       0.022516       0.083694        0.133684     -1.087358      1.610516   Low-Vol Bullish
+2026-06-10 15:11:39,993 - INFO - Analyzing strategy performance by regime...
+2026-06-10 15:11:39,997 - INFO - 
+Performance by Regime:
+                  Periods  Annual_Return  Annual_Volatility  Sharpe_Ratio  Win_Rate
+Regime                                                                             
+High-Vol Bullish      125       0.020792           0.039445      0.527108  0.560000
+Low-Vol Bullish       178       0.014034           0.036606      0.383368  0.544944
+2026-06-10 15:11:39,997 - INFO - Analyzing factor exposures by regime...
+2026-06-10 15:11:40,010 - INFO - 
+Average Factor Exposures by Regime:
+Regime_Label          High-Vol Bullish  Low-Vol Bullish
+10Yr Bond 12_CS               0.029412         0.029412
+10Yr Bond 12_TS               0.029412         0.029412
+10Yr Bond_CS                  0.029412         0.029412
+10Yr Bond_TS                  0.029412         0.029412
+12-1MTR_CS                    0.029412         0.029412
+...                                ...              ...
+Tot Return Index _TS          0.029412         0.029412
+Trailing EPS 36_CS            0.024941         0.028751
+Trailing EPS 36_TS            0.024706         0.028751
+Trailing PE_CS                0.029412         0.029412
+Trailing PE_TS                0.029412         0.029412
+
+[85 rows x 2 columns]
+2026-06-10 15:11:40,010 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
+2026-06-10 15:11:40,038 - INFO - Excel file saved successfully.
+2026-06-10 15:11:40,038 - INFO - Creating performance visualizations...
+2026-06-10 15:11:40,488 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
+2026-06-10 15:11:40,488 - INFO - Creating factor analysis visualizations...
+2026-06-10 15:11:40,683 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
+2026-06-10 15:11:40,683 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---
+2026-06-10 22:25:23,798 - INFO - --- Starting Step Seventeen: GMM Market Regime Analysis ---
+2026-06-10 22:25:23,798 - INFO - Loading data for GMM regime analysis...
+2026-06-10 22:25:23,911 - INFO - Successfully loaded 314 monthly returns.
+2026-06-10 22:25:23,911 - INFO - Successfully loaded 10778 factor exposure records.
+2026-06-10 22:25:23,911 - INFO - Creating features for regime detection...
+2026-06-10 22:25:23,912 - INFO - Created feature set with 303 observations and 5 features.
+2026-06-10 22:25:23,912 - INFO - Finding optimal number of regimes using GMM and BIC...
+2026-06-10 22:25:24,016 - INFO - Tested 2 regimes, BIC: 3932.89
+2026-06-10 22:25:24,064 - INFO - Tested 3 regimes, BIC: 3836.52
+2026-06-10 22:25:24,110 - INFO - Tested 4 regimes, BIC: 3841.09
+2026-06-10 22:25:24,162 - INFO - Tested 5 regimes, BIC: 3871.43
+2026-06-10 22:25:24,240 - INFO - Tested 6 regimes, BIC: 3845.05
+2026-06-10 22:25:24,240 - INFO - Optimal number of regimes found: 3
+2026-06-10 22:25:24,240 - INFO - Analyzing and labeling regimes...
+2026-06-10 22:25:24,243 - INFO - Assigned descriptive labels to regimes.
+2026-06-10 22:25:24,245 - INFO - 
+Regime Characteristics:
+         Returns  Volatility_3M  Volatility_12M  Skewness_12M  Kurtosis_12M             Label
+Regime                                                                                       
+0       0.005607       0.109291        0.130430      0.215656      0.147083   Low-Vol Bullish
+1       0.003707       0.207209        0.209831     -0.198117     -0.162446  High-Vol Bullish
+2       0.022516       0.083694        0.133684     -1.087358      1.610516   Low-Vol Bullish
+2026-06-10 22:25:24,246 - INFO - Analyzing strategy performance by regime...
+2026-06-10 22:25:24,250 - INFO - 
+Performance by Regime:
+                  Periods  Annual_Return  Annual_Volatility  Sharpe_Ratio  Win_Rate
+Regime                                                                             
+High-Vol Bullish      125       0.040283           0.048744      0.826421  0.616000
+Low-Vol Bullish       178       0.018282           0.037918      0.482138  0.595506
+2026-06-10 22:25:24,250 - INFO - Analyzing factor exposures by regime...
+2026-06-10 22:25:24,263 - INFO - 
+Average Factor Exposures by Regime:
+Regime_Label          High-Vol Bullish  Low-Vol Bullish
+10Yr Bond 12_CS               0.029412         0.029412
+10Yr Bond 12_TS               0.029412         0.029412
+10Yr Bond_CS                  0.029412         0.029412
+10Yr Bond_TS                  0.029412         0.029412
+12-1MTR_CS                    0.029412         0.029412
+...                                ...              ...
+Tot Return Index _TS          0.029412         0.029412
+Trailing EPS 36_CS            0.024941         0.028751
+Trailing EPS 36_TS            0.024706         0.028751
+Trailing PE_CS                0.029412         0.029412
+Trailing PE_TS                0.029412         0.029412
+
+[85 rows x 2 columns]
+2026-06-10 22:25:24,266 - INFO - Saving analysis to T2_GMM_Regime_Analysis.xlsx...
+2026-06-10 22:25:24,294 - INFO - Excel file saved successfully.
+2026-06-10 22:25:24,294 - INFO - Creating performance visualizations...
+2026-06-10 22:25:24,772 - INFO - Performance visualizations saved to T2_GMM_Regime_Performance.pdf
+2026-06-10 22:25:24,772 - INFO - Creating factor analysis visualizations...
+2026-06-10 22:25:24,968 - INFO - Factor analysis visualizations saved to T2_GMM_Factor_Analysis.pdf
+2026-06-10 22:25:24,968 - INFO - --- Step Seventeen: GMM Market Regime Analysis Completed ---

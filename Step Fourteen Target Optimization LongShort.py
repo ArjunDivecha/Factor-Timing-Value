@@ -1,6 +1,6 @@
 """
 =============================================================================
-SCRIPT NAME: Step Fourteen Target Optimization.py (Long-Only)
+SCRIPT NAME: Step Fourteen Target Optimization LongShort.py (Long–Short)
 =============================================================================
 
 INPUT FILES (local):
@@ -25,12 +25,12 @@ OUTPUT FILES:
 - T2_Weighted_Average_Factor_Exposure.pdf: Factor exposure analysis
 - T2_Weighted_Average_Factor_Rolling_Analysis.pdf: Rolling factor exposure analysis
 
-VERSION: 4.0 (Long-Only)
+VERSION: 4.1 (Long–Short)
 LAST UPDATED: 2026-04-20
 AUTHOR: Claude Code
 
 DESCRIPTION:
-Optimizes monthly country portfolio weights with long-only constraints to balance three objectives:
+Optimizes monthly country portfolio weights with long–short constraints to balance three objectives:
 1) Maximize portfolio alpha (weighted average of country alphas)
 2) Minimize drift from rolled-forward previous weights (lambda penalty)
 3) Minimize transaction costs from turnover (tcost penalty with country cost shaping)
@@ -40,8 +40,8 @@ then solves for optimal weights that maximize:
 Alpha_Mult * Portfolio Alpha - Lambda * (Drift Penalty)² - Turnover * Transaction Cost
 
 Constraints (per month):
-- Long-only: weights >= 0
 - Sum to 1: Σ weights = 1.0
+- Negative weights allowed (short): weights >= -MAX_WEIGHT
 - Maximum weight: weights <= MAX_WEIGHT
 
 DEPENDENCIES:
@@ -52,7 +52,7 @@ python "Step Fourteen Target Optimization.py"
 
 NOTES:
 - Uses CVXPY with OSQP solver for fast convex optimization
-- Long-only constraints with maximum position size limits
+- Long–short constraints with maximum position size limits (symmetric)
 - All weights must sum to 1.0
 - Uses warm-start for repeated monthly optimizations
 - First month uses original target weights as starting point
@@ -298,8 +298,8 @@ def create_cvxpy_model(n_countries, current_alphas, rolled_forward_weights, coun
     # Define constraints
     constraints = [
         cp.sum(weights_var) == 1,  # Weights sum to 1
-        weights_var >= 0,  # Long-only constraint
-        weights_var <= MAX_WEIGHT  # Maximum weight constraint
+        weights_var >= -MAX_WEIGHT,  # Allow short positions up to -MAX_WEIGHT
+        weights_var <= MAX_WEIGHT  # Maximum long position
     ]
     
     # Create problem
@@ -346,9 +346,11 @@ def optimize_monthly_weights(target_weights, rolled_forward_weights, current_alp
         logging.warning("Optimization failed - weights_var.value is None, using target weights")
         optimized_weights = target_weights.values
     
-    # Clip to bounds and normalize
-    optimized_weights = np.clip(optimized_weights, 0.0, MAX_WEIGHT)
-    optimized_weights = optimized_weights / np.sum(optimized_weights)
+    # Clip to symmetric bounds and re-normalize to sum=1
+    optimized_weights = np.clip(optimized_weights, -MAX_WEIGHT, MAX_WEIGHT)
+    w_sum = np.sum(optimized_weights)
+    if abs(w_sum) > 1e-10:
+        optimized_weights = optimized_weights / w_sum
     
     return pd.Series(optimized_weights, index=target_weights.index)
 
@@ -409,7 +411,7 @@ def run_optimization(target_weights_df, returns_df, alphas_df, country_costs):
     # Constraints
     constraints = [
         cp.sum(weights_var) == 1,
-        weights_var >= 0,
+        weights_var >= -MAX_WEIGHT,
         weights_var <= MAX_WEIGHT
     ]
     
@@ -464,8 +466,10 @@ def run_optimization(target_weights_df, returns_df, alphas_df, country_costs):
                 logging.warning(f"Optimization failed for {date} - weights_var.value is None, using target weights")
                 optimized_weights = current_target.values
             else:
-                optimized_weights = np.clip(optimized_weights, 0.0, MAX_WEIGHT)
-                optimized_weights = optimized_weights / np.sum(optimized_weights)
+                optimized_weights = np.clip(optimized_weights, -MAX_WEIGHT, MAX_WEIGHT)
+                w_sum = np.sum(optimized_weights)
+                if abs(w_sum) > 1e-10:
+                    optimized_weights = optimized_weights / w_sum
             
             # Store results
             weights_series = pd.Series(optimized_weights, index=common_countries)
@@ -1521,7 +1525,7 @@ def main():
     setup_logging()
     
     logging.info("="*80)
-    logging.info("T2 FACTOR TIMING - STEP FOURTEEN: TARGET OPTIMIZATION (LONG-ONLY)")
+    logging.info("T2 FACTOR TIMING - STEP FOURTEEN: TARGET OPTIMIZATION (LONG–SHORT)")
     logging.info("="*80)
     logging.info(f"Alpha Multiplier: {ALPHA_MULT}")
     logging.info(f"Lambda Drift Penalty: {LAMBDA_DRIFT_PENALTY}")

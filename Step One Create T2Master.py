@@ -193,6 +193,147 @@ def check_local_outliers(
     
     return outliers_found
 
+def detect_regime_breaks_sheet(
+    data: pd.DataFrame,
+    sheet_name: str = '',
+    xs_threshold: float = 0.05,
+    ts_pct_threshold: float = 0.80,
+    ts_median_window: int = 12,
+) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
+    """
+    Detect and fix Bloomberg data breaks using cross-sectional + time-series tests.
+
+    Two complementary passes flag bad values:
+
+    Pass A – Cross-sectional outlier detection:
+        For each row (date), compute the median across all countries.
+        If a country's value is < xs_threshold × cross-sectional median
+        (default 5%), it is flagged as implausible (e.g., a P/CF of 0.02
+        when peers are 5–20). This catches long streaks of bad data that
+        defeat any time-series window.
+
+    Pass B – Two-sided time-series median filter:
+        For values that survived Pass A, check whether the value deviates
+        from BOTH the preceding and following ts_median_window non-null,
+        non-flagged values by > ts_pct_threshold. This catches isolated
+        spikes/drops that are within the plausible cross-sectional range
+        but inconsistent with the country's own history.
+
+    Correction is strictly forward-fill: bad values are replaced with the
+    last preceding good value. No future data propagates backward.
+
+    Args:
+        data:               DataFrame with 'Country' as first column, then
+                            one column per country of numeric data.
+        sheet_name:         Sheet name for logging.
+        xs_threshold:       Cross-sectional floor as fraction of row median
+                            (0.05 = values < 5% of peers are flagged).
+        ts_pct_threshold:   Time-series pct-change threshold (0.80 = 80%).
+        ts_median_window:   Neighbours on each side for time-series test.
+
+    Returns:
+        (cleaned DataFrame, list of replacement log dicts)
+    """
+    country_cols = [c for c in data.columns[1:]]
+    numeric_data = data[country_cols].apply(pd.to_numeric, errors='coerce')
+
+    # ── Pass A: Cross-sectional outlier detection ──
+    is_bad = pd.DataFrame(False, index=numeric_data.index, columns=numeric_data.columns)
+    xs_flags = 0
+
+    if xs_threshold > 0:
+        row_medians = numeric_data.median(axis=1)
+        for idx in numeric_data.index:
+            row_med = row_medians[idx]
+            if pd.isna(row_med) or row_med <= 0:
+                continue
+            floor = xs_threshold * row_med
+            for col in country_cols:
+                v = numeric_data.at[idx, col]
+                if pd.notna(v) and v < floor:
+                    is_bad.at[idx, col] = True
+        xs_flags = int(is_bad.sum().sum())
+
+    # ── Pass B: Two-sided time-series median filter (on non-flagged data) ──
+    ts_flags = 0
+    for col in country_cols:
+        vals = numeric_data[col].values.astype('float64')
+        bad_col = is_bad[col].to_numpy(copy=True)
+        nn_idx = np.where(~np.isnan(vals))[0]
+        if len(nn_idx) < 3:
+            continue
+
+        for pos, i in enumerate(nn_idx):
+            if bad_col[i]:
+                continue
+            v = vals[i]
+
+            before_positions = nn_idx[max(0, pos - ts_median_window):pos]
+            before_good = [vals[j] for j in before_positions
+                          if not bad_col[j] and not np.isnan(vals[j])]
+            after_positions = nn_idx[pos + 1:pos + 1 + ts_median_window]
+            after_good = [vals[j] for j in after_positions
+                         if not bad_col[j] and not np.isnan(vals[j])]
+
+            if len(before_good) == 0 and len(after_good) == 0:
+                continue
+
+            med_before = np.median(before_good) if before_good else None
+            med_after = np.median(after_good) if after_good else None
+
+            bad_vs_before = False
+            bad_vs_after = False
+            if med_before is not None and med_before != 0:
+                bad_vs_before = abs((v - med_before) / med_before) > ts_pct_threshold
+            if med_after is not None and med_after != 0:
+                bad_vs_after = abs((v - med_after) / med_after) > ts_pct_threshold
+
+            if len(before_good) == 0:
+                flag = bad_vs_after
+            elif len(after_good) == 0:
+                flag = bad_vs_before
+            else:
+                flag = bad_vs_before and bad_vs_after
+
+            if flag:
+                bad_col[i] = True
+                ts_flags += 1
+
+        is_bad[col] = bad_col
+
+    # ── Pass C: Forward-fill bad values with last good value ──
+    cleaned = data.copy()
+    replacements: List[Dict[str, Any]] = []
+
+    for col in country_cols:
+        vals_orig = numeric_data[col].values.astype('float64')
+        bad_col = is_bad[col].values
+        last_good = np.nan
+
+        for i in range(len(vals_orig)):
+            if np.isnan(vals_orig[i]):
+                continue
+            if bad_col[i]:
+                replacement = last_good
+                replacements.append({
+                    'sheet': sheet_name,
+                    'country': col,
+                    'index': i,
+                    'original_value': float(vals_orig[i]),
+                    'replaced_with': float(replacement) if not np.isnan(replacement) else None,
+                    'detection': 'cross-sectional' if i in is_bad.index[is_bad[col]] else 'time-series',
+                })
+                cleaned.at[i, col] = replacement if not np.isnan(replacement) else np.nan
+            else:
+                last_good = vals_orig[i]
+
+    logger.info(
+        f"  Sheet {sheet_name}: {xs_flags} cross-sectional + {ts_flags} "
+        f"time-series flags → {len(replacements)} total forward-fills."
+    )
+    return cleaned, replacements
+
+
 def winsorize_column(
     series: pd.Series,
     mad_threshold: float = 5.0
@@ -676,6 +817,25 @@ def process_excel_file() -> None:
                     logger.error(f"Error processing MA signal for {sheet_name}: {str(e)}")
                     raise
             
+            # Sheets eligible for regime-break detection.  Split into two
+            # groups because the cross-sectional test only makes sense when
+            # all countries are on the same scale (valuation ratios).
+            # Price/index/market-cap series differ by orders of magnitude
+            # across countries (e.g. Thai SET ~1400 vs S&P ~5000) so they
+            # only get the time-series test.
+            regime_break_valuation = {
+                'Best Cash Flow', 'Best PE ', 'Best PBK', 'Best Price Sales',
+                'Best Div Yield', 'EV to EBITDA', 'Shiller PE', 'Trailing PE',
+                'Positive PE ', 'Best ROE',
+            }
+            regime_break_level = {
+                'MCAP', 'MCAP Adj', 'PX_LAST', 'Tot Return Index ',
+                '120MA', 'Mcap Weights',
+            }
+            regime_break_sheets = regime_break_valuation | regime_break_level
+
+            all_regime_break_log: List[Dict[str, Any]] = []
+
             # Process other sheets as before
             for sheet_name in sheet_names:
                 logger.info(f"Processing sheet: {sheet_name}")
@@ -703,6 +863,22 @@ def process_excel_file() -> None:
                     # Forward fill with type inference
                     data = data.ffill().infer_objects()
                     
+                    # ── Step 0: Regime break detection (before winsorization) ──
+                    # For valuation ratios, use cross-sectional + time-series.
+                    # For price/index/mcap sheets, use time-series only
+                    # (countries are on wildly different scales).
+                    if sheet_name in regime_break_sheets:
+                        xs_thresh = 0.05 if sheet_name in regime_break_valuation else 0.0
+                        data, replacements = detect_regime_breaks_sheet(
+                            data,
+                            sheet_name=sheet_name,
+                            xs_threshold=xs_thresh,
+                            ts_pct_threshold=0.80,
+                            ts_median_window=12,
+                        )
+                        if replacements:
+                            all_regime_break_log.extend(replacements)
+
                     # Process non-Mcap sheets
                     if sheet_name in process_sheets:
                         total_winsorized_changes = 0
@@ -791,7 +967,19 @@ def process_excel_file() -> None:
             # Write P2P data to the output file
             p2p_data.to_excel(writer, sheet_name='P2P', index=False)
             logger.info("P2P data processed and updated successfully")
-        
+
+        # ── Write regime break log to disk ──
+        if all_regime_break_log:
+            log_path = os.path.join(log_dir, 'T2_regime_break_log.xlsx')
+            log_df = pd.DataFrame(all_regime_break_log)
+            log_df.to_excel(log_path, index=False)
+            logger.info(
+                f"Regime break log: {len(all_regime_break_log)} total forward-fills "
+                f"across all sheets — saved to {log_path}"
+            )
+        else:
+            logger.info("Regime break detection: no breaks found across any sheet.")
+
         end_time = datetime.now()
         processing_time = (end_time - start_time).total_seconds()
         logger.info(f"Financial data processing completed in {processing_time:.2f} seconds")

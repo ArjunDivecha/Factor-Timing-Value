@@ -3,73 +3,73 @@ Missing country mappings and replacements (mean imputation):
 Data completeness (nonzero count by country):
 
 Optimized Portfolio:
-Singapore: 309
-Australia: 309
-Canada: 280
-Germany: 295
-Japan: 298
-Switzerland: 277
-U.K.: 296
-NASDAQ: 307
-U.S.: 311
-France: 291
-Netherlands: 298
-Sweden: 287
-Italy: 301
-ChinaA: 287
-Chile: 312
-Indonesia: 309
-Philippines: 309
-Poland: 302
-US SmallCap: 307
-Malaysia: 292
-Taiwan: 309
-Mexico: 311
-Korea: 305
-Brazil: 312
-South Africa: 309
-Denmark: 302
-India: 301
-ChinaH: 306
-Hong Kong: 312
-Thailand: 307
-Turkey: 302
-Spain: 304
-Vietnam: 286
-Saudi Arabia: 261
+Singapore: 297
+Australia: 272
+Canada: 266
+Germany: 298
+Japan: 279
+Switzerland: 265
+U.K.: 275
+NASDAQ: 292
+U.S.: 314
+France: 267
+Netherlands: 292
+Sweden: 277
+Italy: 294
+ChinaA: 276
+Chile: 302
+Indonesia: 294
+Philippines: 296
+Poland: 297
+US SmallCap: 290
+Malaysia: 282
+Taiwan: 300
+Mexico: 312
+Korea: 298
+Brazil: 290
+South Africa: 286
+Denmark: 283
+India: 280
+ChinaH: 299
+Hong Kong: 315
+Thailand: 300
+Turkey: 300
+Spain: 290
+Vietnam: 279
+Saudi Arabia: 258
 
 Final Portfolio:
-Singapore: 157
-Australia: 110
-Canada: 122
-Germany: 142
-Japan: 176
-Switzerland: 93
-U.K.: 142
-NASDAQ: 175
-U.S.: 310
-France: 108
-Netherlands: 123
-Sweden: 164
-Italy: 184
-ChinaA: 142
-Chile: 188
+Singapore: 144
+Australia: 119
+Canada: 116
+Germany: 118
+Japan: 165
+Switzerland: 98
+U.K.: 110
+NASDAQ: 166
+U.S.: 313
+France: 111
+Netherlands: 134
+Sweden: 160
+Italy: 180
+ChinaA: 112
+Chile: 176
 Indonesia: 182
-Philippines: 169
-Poland: 207
-US SmallCap: 155
-Malaysia: 149
-Taiwan: 133
-Mexico: 202
-Korea: 165
-Brazil: 173
-South Africa: 166
-Denmark: 155
-India: 102
-ChinaH: 179
-Hong Kong: 210
-Thailand: 120
-Turkey: 234
-Spain: 160
-Vietnam: 116
-Saudi Arabia: 69
+Philippines: 162
+Poland: 216
+US SmallCap: 126
+Malaysia: 143
+Taiwan: 119
+Mexico: 183
+Korea: 152
+Brazil: 169
+South Africa: 177
+Denmark: 150
+India: 130
+ChinaH: 157
+Hong Kong: 183
+Thailand: 125
+Turkey: 245
+Spain: 155
+Vietnam: 117
+Saudi Arabia: 67

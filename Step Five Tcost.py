@@ -1,23 +1,20 @@
 """
 =============================================================================
-SCRIPT NAME: Step Five FAST.py - High-Performance Portfolio Optimization
+SCRIPT NAME: Step Five Tcost.py - High-Performance Portfolio Optimization with Transaction Cost Penalty
 =============================================================================
 
 INPUT FILES:
 - T2_Optimizer.xlsx: Monthly factor returns from Step Four
-- T2_RSQ.xlsx (sheet Monthly_RSQ, optional): Per-factor R² on 12-month cumulative net returns,
-  same layout as GDELT_RSQ.xlsx. When USE_RSQ_MODIFIER is True, each month’s μ is scaled
-  factor-by-factor (see RSQ_INFLUENCE / RSQ_MISSING_MULTIPLIER in script).
 - Step Factor Categories.xlsx: Factor categories and maximum weight constraints
 
 OUTPUT FILES:
-- T2_rolling_window_weights.xlsx: Optimized factor weights (hybrid window strategy)
+- T2_rolling_window_weights_tcost.xlsx: Optimized factor weights with Tcost penalty (hybrid window strategy)
 - T2_strategy_statistics.xlsx: Strategy performance statistics and monthly returns
 - T2_factor_weight_heatmap.pdf: Heatmap visualization of factor weights over time
 - T2_strategy_performance.pdf: Cumulative performance visualization
 
-VERSION: 2.1 - High Performance CVXPY Implementation (+ optional T2 RSQ μ modifier)
-LAST UPDATED: 2026-04-06
+VERSION: 3.0 - High Performance CVXPY Implementation with Transaction Cost Penalty
+LAST UPDATED: 2026-02-18
 AUTHOR: Claude Code
 
 DESCRIPTION:
@@ -41,12 +38,9 @@ DEPENDENCIES:
 - openpyxl
 
 USAGE:
-python "Step Five FAST.py"
+python "Step Five Tcost.py"
 
 NOTES:
-- Rows in T2_Optimizer.xlsx that are all-NaN are dropped before optimization (stub months).
-- With USE_RSQ_MODIFIER True, μ = (8 × window mean) × m with m from T2_RSQ.xlsx (same rules as
-  Step Five GDELT FAST). Default USE_RSQ_MODIFIER False until T2_RSQ.xlsx exists.
 - Uses CVXPY with OSQP solver for fast convex optimization
 - Warm-start capabilities for 2-3x additional speedup
 - Eliminates expanding window analysis (focus on hybrid only)
@@ -54,8 +48,6 @@ NOTES:
 - Maintains identical output format to original Step Five
 =============================================================================
 """
-
-import os
 
 import pandas as pd
 import numpy as np
@@ -71,8 +63,6 @@ import logging
 import time
 import warnings
 
-from step_five_multiwindow_stats import log_step_five_multiwindow_table
-
 warnings.filterwarnings('ignore')
 plt.style.use('default')
 
@@ -81,16 +71,12 @@ plt.style.use('default')
 # =============================================================================
 
 # Portfolio optimization parameters
-LAMBDA = 0.0              # Risk aversion parameter (higher = more risk-averse)
-HHI_PENALTY = 0.005         # Concentration penalty (higher = more diversified)
+LAMBDA = 0.1              # Risk aversion parameter (higher = more risk-averse)
+HHI_PENALTY = 0.005          # Concentration penalty (higher = more diversified)
+TCOST_PENALTY = 1.0          # Transaction cost penalty (higher = more penalization of expensive factors)
 WINDOW_SIZE = 60           # Rolling window size in months
-# RSQ modifier (T2_RSQ.xlsx, same Monthly_RSQ layout as GDELT_RSQ.xlsx)
-USE_RSQ_MODIFIER = False
-RSQ_PATH = "T2_RSQ.xlsx"
-RSQ_SHEET_NAME = "Monthly_RSQ"
-RSQ_MISSING_MULTIPLIER = 1.0
-RSQ_INFLUENCE = 0.0  # 0 = no RSQ effect, 1 = full μ × RSQ (after fill)
 # EMA_DECAY removed - using simple arithmetic mean like original Step Five
+
 # =============================================================================
 # SETUP LOGGING
 # =============================================================================
@@ -115,7 +101,7 @@ class FastPortfolioOptimizer:
     Subject to: sum(w) = 1, 0 ≤ w ≤ max_weights
     """
     
-    def __init__(self, n_assets, factor_names, lambda_param=1.0, hhi_penalty=0.01, max_weights=None):
+    def __init__(self, n_assets, factor_names, lambda_param=1.0, hhi_penalty=0.01, tcost_penalty=1.0, max_weights=None):
         """
         Initialize optimizer with pre-allocated variables for warm-start.
         
@@ -130,12 +116,13 @@ class FastPortfolioOptimizer:
         self.factor_names = factor_names
         self.lambda_param = lambda_param
         self.hhi_penalty = hhi_penalty
+        self.tcost_penalty = tcost_penalty
         
         # Pre-process max weights into array for vectorized operations
         if max_weights is None:
             self.max_weights_array = np.ones(n_assets)
         else:
-            self.max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
+            self.max_weights_array = np.array([max_weights.get(name, 0.0) for name in factor_names])
         
         # Pre-allocate CVXPY variables (reused across optimizations)
         self.weights_var = cp.Variable(n_assets)
@@ -150,29 +137,32 @@ class FastPortfolioOptimizer:
         # Store previous solution for warm-start
         self.prev_weights = None
         
-    def optimize_weights(self, expected_returns, covariance_matrix):
+    def optimize_weights(self, expected_returns, covariance_matrix, tcost_vector=None):
         """
         Optimize portfolio weights using CVXPY with warm-start.
         
         Args:
             expected_returns: np.array of expected returns
             covariance_matrix: np.array covariance matrix
+            tcost_vector: np.array of trading costs per factor (optional)
             
         Returns:
             np.array of optimal weights
         """
-        P = np.asarray(covariance_matrix, dtype=np.float64)
-        P = (P + P.T) * 0.5
-        mu = np.asarray(expected_returns, dtype=np.float64).ravel()
-
         # Convert utility function to quadratic form:
-        # Maximize: w'μ - λ*w'Σw - γ*||w||²
-        portfolio_return = self.weights_var.T @ mu
-        risk_penalty = self.lambda_param * cp.quad_form(self.weights_var, P)
+        # Maximize: w'μ - λ*w'Σw - γ*||w||² - tcost_penalty * w'c
+        portfolio_return = self.weights_var.T @ expected_returns
+        risk_penalty = self.lambda_param * cp.quad_form(self.weights_var, covariance_matrix)
         concentration_penalty = self.hhi_penalty * cp.sum_squares(self.weights_var)
         
+        # Transaction cost penalty: penalize factors with expensive underlying country portfolios
+        if tcost_vector is not None:
+            tcost_term = self.tcost_penalty * (self.weights_var.T @ tcost_vector)
+        else:
+            tcost_term = 0
+        
         # Objective: maximize utility (minimize negative utility)
-        objective = cp.Maximize(portfolio_return - risk_penalty - concentration_penalty)
+        objective = cp.Maximize(portfolio_return - risk_penalty - concentration_penalty - tcost_term)
         
         # Create problem
         problem = cp.Problem(objective, self.constraints)
@@ -200,12 +190,23 @@ class FastPortfolioOptimizer:
             # Fall back to equal weights
             return np.ones(self.n_assets) / self.n_assets
 
+    def get_tcost_vector(self, date, tcost_df, factor_names):
+        """
+        Extract the Tcost vector for a given date, aligned to factor_names.
+        Missing factors get the cross-sectional mean for that date.
+        """
+        if tcost_df is None or date not in tcost_df.index:
+            return None
+        row = tcost_df.loc[date].reindex(factor_names)
+        mean_val = row.mean()
+        return row.fillna(mean_val).values
+
 def load_and_prepare_data():
     """
     Load and prepare all data with optimized pandas operations.
     
     Returns:
-        tuple: (returns_df, max_weights_dict)
+        tuple: (returns_df, max_weights_dict, tcost_df)
     """
     logging.info("Loading input data...")
     
@@ -213,116 +214,46 @@ def load_and_prepare_data():
     returns = pd.read_excel('T2_Optimizer.xlsx', index_col=0)
     returns.index = pd.to_datetime(returns.index)
     
-    # Load factor constraints 
+    # Load factor eligibility (only Max > 0 from Step Factor Categories.xlsx)
     factor_categories = pd.read_excel('Step Factor Categories.xlsx')
-    max_weights = dict(zip(factor_categories['Factor Name'], factor_categories['Max']))
+    factor_categories['Factor Name'] = (
+        factor_categories['Factor Name'].astype(str).str.strip()
+    )
+    listed_factors = factor_categories['Factor Name'].tolist()
+    eligible = factor_categories.loc[factor_categories['Max'] > 0, ['Factor Name', 'Max']]
+    max_weights = dict(zip(eligible['Factor Name'], eligible['Max']))
+
+    # Load Tcost data
+    tcost_df = pd.read_excel('T2_Tcost.xlsx', sheet_name='Factor_Tcost', index_col=0)
+    tcost_df.index = pd.to_datetime(tcost_df.index)
+    logging.info(f"Loaded Tcost data: {tcost_df.shape[0]} periods, {tcost_df.shape[1]} factors")
     
-    # Step Four writes monthly net returns as percentage points (decimal × 100).
-    # Always convert to decimals; mean>1 heuristic breaks when typical |r| stays below 1.
-    returns = returns.apply(pd.to_numeric, errors="coerce") / 100.0
+    # Convert to decimals if needed
+    if returns.abs().mean().mean() > 1:
+        returns = returns / 100
     
     # Remove Monthly Return_CS if present
     if 'Monthly Return_CS' in returns.columns:
         returns = returns.drop(columns=['Monthly Return_CS'])
 
-    all_nan_rows = returns.isna().all(axis=1)
-    if all_nan_rows.any():
-        n_bad = int(all_nan_rows.sum())
-        bad_dates = returns.index[all_nan_rows].strftime("%Y-%m").tolist()
+    eligible_cols = [c for c in max_weights if c in returns.columns]
+    not_in_file = sorted(set(returns.columns) - set(listed_factors))
+    if not_in_file:
         logging.warning(
-            "Dropping %d month(s) with all-NaN factor returns: %s",
-            n_bad,
-            bad_dates[:5] + (["..."] if len(bad_dates) > 5 else []),
+            "Dropping %d factor(s) not in Step Factor Categories.xlsx: %s",
+            len(not_in_file),
+            not_in_file,
         )
-        returns = returns.loc[~all_nan_rows]
+    returns = returns[eligible_cols]
+    tcost_df = tcost_df.reindex(columns=eligible_cols)
 
-    logging.info(f"Loaded returns data: {returns.shape[0]} periods, {returns.shape[1]} factors")
-    logging.info(f"Loaded max weight constraints for {len(max_weights)} factors")
-    n_f, n_t = returns.shape[1], returns.shape[0]
-    if n_f > n_t:
-        logging.warning(
-            "More factors (%d) than time periods (%d): covariance is rank-deficient.",
-            n_f,
-            n_t,
-        )
-    if n_f > WINDOW_SIZE:
-        logging.warning(
-            "Factor count (%d) > WINDOW_SIZE (%d): rolling covariance is under-identified; "
-            "Sharpe/return can look implausibly high.",
-            n_f,
-            WINDOW_SIZE,
-        )
-
-    return returns, max_weights
-
-
-def load_rsq_modifier_frame(returns_df: pd.DataFrame) -> pd.DataFrame:
-    """Load T2_RSQ.xlsx; align index/columns to returns_df."""
-    if not USE_RSQ_MODIFIER:
-        return pd.DataFrame()
-
-    if not os.path.isfile(RSQ_PATH):
-        raise FileNotFoundError(
-            f"USE_RSQ_MODIFIER is True but {RSQ_PATH!r} was not found. "
-            "Create it (same layout as GDELT_RSQ.xlsx Monthly_RSQ) or set USE_RSQ_MODIFIER = False."
-        )
-
-    rsq = pd.read_excel(RSQ_PATH, sheet_name=RSQ_SHEET_NAME, index_col=0)
-    rsq.index = pd.to_datetime(rsq.index, errors="coerce").to_period("M").to_timestamp()
-    rsq = rsq.apply(pd.to_numeric, errors="coerce")
-
-    want_cols = list(returns_df.columns)
-    missing = [c for c in want_cols if c not in rsq.columns]
-    if missing:
-        logging.warning(
-            "RSQ file missing %d factor column(s); those use multiplier %.4f. Examples: %s",
-            len(missing),
-            RSQ_MISSING_MULTIPLIER,
-            missing[:5],
-        )
-    rsq = rsq.reindex(columns=want_cols)
-    return rsq
-
-
-def rsq_multiplier_vector(
-    rsq_df: pd.DataFrame,
-    date: pd.Timestamp,
-    factor_names: list,
-    fallback_date: pd.Timestamp | None = None,
-) -> pd.Series:
-    if rsq_df.empty:
-        return pd.Series(RSQ_MISSING_MULTIPLIER, index=factor_names, dtype=float)
-
-    def _row_for(d: pd.Timestamp | None) -> pd.Series | None:
-        if d is None or d not in rsq_df.index:
-            return None
-        return rsq_df.loc[d].reindex(factor_names)
-
-    r = _row_for(date)
-    if r is None and fallback_date is not None:
-        r = _row_for(fallback_date)
-    if r is None:
-        r = pd.Series(np.nan, index=factor_names, dtype=float)
-    filled = r.fillna(RSQ_MISSING_MULTIPLIER).astype(float)
-    base = float(RSQ_MISSING_MULTIPLIER)
-    effective = base + float(RSQ_INFLUENCE) * (filled - base)
-    effective = np.maximum(effective.to_numpy(dtype=float), 0.0)
-    return pd.Series(effective, index=factor_names, dtype=float)
-
-
-def apply_rsq_to_expected_returns(
-    expected_returns: pd.Series | np.ndarray,
-    mult: pd.Series,
-    factor_names: list,
-) -> pd.Series:
-    s = (
-        expected_returns
-        if isinstance(expected_returns, pd.Series)
-        else pd.Series(np.asarray(expected_returns, dtype=float).ravel(), index=factor_names)
+    logging.info(
+        "Loaded returns: %d periods, %d eligible factors (Max > 0)",
+        returns.shape[0],
+        len(eligible_cols),
     )
-    m = mult.reindex(s.index).fillna(RSQ_MISSING_MULTIPLIER)
-    return (s * m).astype(float)
 
+    return returns, max_weights, tcost_df
 
 def calculate_rolling_statistics(returns_df, window_size):
     """
@@ -390,7 +321,7 @@ def run_fast_optimization():
     start_time = time.time()
     
     # Load data
-    returns_df, max_weights = load_and_prepare_data()
+    returns_df, max_weights, tcost_df = load_and_prepare_data()
     
     # Calculate next month date for extra optimization (matching 60 Month program)
     next_month_date = returns_df.index[-1] + pd.DateOffset(months=1)
@@ -400,30 +331,17 @@ def run_fast_optimization():
     expected_returns_dict, covariance_dict, optimization_dates = calculate_rolling_statistics(
         returns_df, WINDOW_SIZE
     )
-
-    factor_names = list(returns_df.columns)
-    rsq_df = load_rsq_modifier_frame(returns_df)
-    if USE_RSQ_MODIFIER and not rsq_df.empty:
-        logging.info(
-            "Applying %s RSQ multipliers: RSQ_INFLUENCE=%.4f, missing → %.4f.",
-            RSQ_PATH,
-            RSQ_INFLUENCE,
-            RSQ_MISSING_MULTIPLIER,
-        )
-        for date in optimization_dates:
-            mult = rsq_multiplier_vector(rsq_df, date, factor_names)
-            expected_returns_dict[date] = apply_rsq_to_expected_returns(
-                expected_returns_dict[date], mult, factor_names
-            )
-
+    
     # Initialize fast optimizer
     n_assets = len(returns_df.columns)
+    factor_names = list(returns_df.columns)
     
     optimizer = FastPortfolioOptimizer(
         n_assets=n_assets,
         factor_names=factor_names,
         lambda_param=LAMBDA,
         hhi_penalty=HHI_PENALTY,
+        tcost_penalty=TCOST_PENALTY,
         max_weights=max_weights
     )
     
@@ -443,8 +361,11 @@ def run_fast_optimization():
         expected_returns = expected_returns_dict[date]
         covariance_matrix = covariance_dict[date]
         
+        # Get Tcost vector for this date
+        tcost_vector = optimizer.get_tcost_vector(date, tcost_df, factor_names)
+        
         # Optimize weights
-        optimal_weights = optimizer.optimize_weights(expected_returns, covariance_matrix)
+        optimal_weights = optimizer.optimize_weights(expected_returns, covariance_matrix, tcost_vector)
         
         # Clean up numerical precision errors while preserving constraints
         optimal_weights = np.maximum(optimal_weights, 0)  # Floor negative weights at 0
@@ -454,7 +375,7 @@ def run_fast_optimization():
         if abs(weight_sum - 1.0) > 1e-6:
             scaled_weights = optimal_weights / weight_sum
             # Check if renormalization would violate max weight constraints
-            max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
+            max_weights_array = np.array([max_weights.get(name, 0.0) for name in factor_names])
             if np.any(scaled_weights > max_weights_array + 1e-8):
                 logging.warning(f"Renormalization would violate max weight constraints. Sum: {weight_sum:.6f}")
                 # Use original weights to preserve constraint compliance
@@ -474,17 +395,7 @@ def run_fast_optimization():
     # Calculate expected returns and covariance for extra month
     factor_means = extra_month_data.mean(axis=0)
     expected_returns_extra = 8 * factor_means  # Apply 8x scaling factor
-    if USE_RSQ_MODIFIER and not rsq_df.empty:
-        mult_x = rsq_multiplier_vector(
-            rsq_df,
-            next_month_date,
-            factor_names,
-            fallback_date=returns_df.index[-1],
-        )
-        expected_returns_extra = apply_rsq_to_expected_returns(
-            expected_returns_extra, mult_x, factor_names
-        )
-
+    
     # Covariance matrix (annualized)
     cov_matrix_extra = np.cov(extra_month_data.values.T, ddof=0) * 12
     
@@ -497,15 +408,18 @@ def run_fast_optimization():
         avg_var = np.diag(cov_matrix_extra).mean()
         cov_matrix_extra = np.eye(len(extra_month_data.columns)) * avg_var
     
+    # Get Tcost vector for extra month (use last available date)
+    tcost_vector_extra = optimizer.get_tcost_vector(returns_df.index[-1], tcost_df, factor_names)
+    
     # Optimize weights for extra month
-    optimal_weights_extra = optimizer.optimize_weights(expected_returns_extra, cov_matrix_extra)
+    optimal_weights_extra = optimizer.optimize_weights(expected_returns_extra, cov_matrix_extra, tcost_vector_extra)
     
     # Clean up numerical precision errors
     optimal_weights_extra = np.maximum(optimal_weights_extra, 0)
     weight_sum = optimal_weights_extra.sum()
     if abs(weight_sum - 1.0) > 1e-6:
         scaled_weights = optimal_weights_extra / weight_sum
-        max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
+        max_weights_array = np.array([max_weights.get(name, 0.0) for name in factor_names])
         if not np.any(scaled_weights > max_weights_array + 1e-8):
             optimal_weights_extra = scaled_weights
     
@@ -857,7 +771,7 @@ def save_results(weights_df, performance_results):
     logging.info("Saving results to Excel files...")
     
     # Save weights
-    weights_output_file = 'T2_rolling_window_weights.xlsx'
+    weights_output_file = 'T2_rolling_window_weights_tcost.xlsx'
     weights_df.to_excel(weights_output_file)
     logging.info(f"Weights saved to {weights_output_file}")
     
@@ -903,7 +817,7 @@ def main():
     setup_logging()
     
     logging.info("="*80)
-    logging.info("T2 FACTOR TIMING - STEP FIVE FAST: HIGH-PERFORMANCE OPTIMIZATION")
+    logging.info("T2 FACTOR TIMING - STEP FIVE TCOST: HIGH-PERFORMANCE OPTIMIZATION WITH TRANSACTION COST PENALTY")
     logging.info("="*80)
     logging.info("Optimization Engine: CVXPY with OSQP solver")
     logging.info("Features: Warm-start, batch processing, vectorized operations")
@@ -919,21 +833,20 @@ def main():
         # Save results
         save_results(weights_df, performance_results)
         
-        # Display summary (full period + rolling 12m / 3y / 5y windows)
+        # Display summary
         logging.info("="*80)
-        logging.info("OPTIMIZATION RESULTS SUMMARY (multi-window)")
+        logging.info("OPTIMIZATION RESULTS SUMMARY")
         logging.info("="*80)
-        log_step_five_multiwindow_table(
-            performance_results["monthly_returns"],
-            performance_results["monthly_turnover"],
-            logging.info,
-        )
+        
+        for metric, value in performance_results['statistics'].items():
+            logging.info(f"{metric:30s}: {value:8.2f}")
+        
         logging.info("="*80)
-        logging.info("STEP FIVE FAST COMPLETED SUCCESSFULLY")
+        logging.info("STEP FIVE TCOST COMPLETED SUCCESSFULLY")
         logging.info("="*80)
         
     except Exception as e:
-        logging.error(f"Error in Step Five FAST: {str(e)}")
+        logging.error(f"Error in Step Five Tcost: {str(e)}")
         import traceback
         traceback.print_exc()
         raise

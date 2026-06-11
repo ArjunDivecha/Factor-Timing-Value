@@ -95,7 +95,8 @@ def analyze_portfolios(
     data: pd.DataFrame,
     features: list,
     benchmark_returns: pd.Series,
-) -> Dict[str, pd.Series]:
+    trading_costs: pd.Series,
+) -> tuple[Dict[str, pd.Series], Dict[str, pd.Series]]:
     """
     Build factor portfolios with fuzzy logic (soft 15–25% linear taper) and
     return monthly **net** returns (portfolio – benchmark).
@@ -115,8 +116,11 @@ def analyze_portfolios(
     -------
     monthly_net_returns : dict[str, Series]
         Net return series per factor.
+    monthly_trading_costs : dict[str, Series]
+        Weighted-average trading cost series per factor.
     """
     monthly_net_returns: Dict[str, pd.Series] = {}
+    monthly_trading_costs: Dict[str, pd.Series] = {}
     
     print("Pre-indexing data...")
     
@@ -171,6 +175,7 @@ def analyze_portfolios(
             
             # Store as numpy arrays for fast computation
             feature_merged_cache[feature][date] = (
+                merged['country'].values,
                 merged['factor_value'].values,
                 merged['return_value'].values
             )
@@ -191,10 +196,11 @@ def analyze_portfolios(
         
         # Initialize results
         portfolio_returns = pd.Series(index=feature_dates, dtype=float)
+        portfolio_trading_costs = pd.Series(index=feature_dates, dtype=float)
         
         # Process each date with valid data
         for date in feature_dates:
-            factor_values, return_values = feat_by_date[date]
+            data_countries, factor_values, return_values = feat_by_date[date]
             n = len(factor_values)
             
             if n == 0:
@@ -221,6 +227,7 @@ def analyze_portfolios(
             
             weights_filtered = weights[nonzero_mask]
             returns_filtered = return_values[nonzero_mask]
+            countries_filtered = data_countries[nonzero_mask]
             
             # Normalize weights to sum to 1
             weights_filtered = weights_filtered / weights_filtered.sum()
@@ -228,9 +235,18 @@ def analyze_portfolios(
             # Portfolio return = weighted sum
             portfolio_return = np.dot(weights_filtered, returns_filtered)
             portfolio_returns[date] = portfolio_return
+
+            country_trading_costs = trading_costs.reindex(countries_filtered).to_numpy(dtype=float)
+            valid_cost_mask = ~np.isnan(country_trading_costs)
+            if valid_cost_mask.any():
+                cost_weights = weights_filtered[valid_cost_mask]
+                cost_weights = cost_weights / cost_weights.sum()
+                portfolio_trading_cost = np.dot(cost_weights, country_trading_costs[valid_cost_mask])
+                portfolio_trading_costs[date] = portfolio_trading_cost
         
         # Drop any NaN values
         portfolio_returns = portfolio_returns.dropna()
+        portfolio_trading_costs = portfolio_trading_costs.dropna()
         
         # Skip if no valid returns
         if portfolio_returns.empty:
@@ -242,12 +258,15 @@ def analyze_portfolios(
         if any(valid_idx):
             net_returns = portfolio_returns[valid_idx] - aligned_benchmark[valid_idx]
             monthly_net_returns[feature] = net_returns
+
+        if not portfolio_trading_costs.empty:
+            monthly_trading_costs[feature] = portfolio_trading_costs
         
         processed += 1
         if processed % 20 == 0:
             print(f"  Processed {processed}/{len(features)} features...")
 
-    return monthly_net_returns
+    return monthly_net_returns, monthly_trading_costs
 
 
 # ------------------------------------------------------------------
@@ -348,10 +367,32 @@ def save_net_returns_to_excel(net_returns: Dict[str, pd.Series], output_path: st
     print(f"T2_Optimizer.xlsx saved to {output_path}")
 
 
+def save_trading_costs_to_excel(trading_costs: Dict[str, pd.Series], output_path: str):
+    """Save monthly factor trading costs to Excel."""
+    trading_cost_df = pd.DataFrame(trading_costs).sort_index()
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        trading_cost_df.to_excel(writer, sheet_name="Trading_Costs", index_label="Date")
+        workbook = writer.book
+        worksheet = writer.sheets["Trading_Costs"]
+        date_format = workbook.add_format({"num_format": "dd-mmm-yyyy"})
+        number_format = workbook.add_format({"num_format": "0.0000"})
+        worksheet.set_column(0, 0, 15, date_format)
+        worksheet.set_column(1, len(trading_cost_df.columns), 12, number_format)
+
+    print(f"T2_Trading_Cost.xlsx saved to {output_path}")
+
+
 # ------------------------------------------------------------------
 # Driver
 # ------------------------------------------------------------------
-def run_portfolio_analysis(data_path: str, benchmark_path: str, output_path: str):
+def run_portfolio_analysis(
+    data_path: str,
+    benchmark_path: str,
+    trading_cost_path: str,
+    output_path: str,
+    trading_cost_output_path: str,
+):
     """Load data, run analysis, save results."""
     print("Loading data …")
     data = pd.read_csv(data_path)
@@ -363,20 +404,38 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_path: str
     bench.index = pd.to_datetime(bench.index).to_period("M").to_timestamp()
     benchmark_returns = bench["equal_weight"]
 
+    trading_cost_df = pd.read_excel(trading_cost_path, sheet_name="jjunk")
+    trading_costs = pd.Series(
+        pd.to_numeric(trading_cost_df["Trading Cost"], errors="coerce").values,
+        index=trading_cost_df["Country"],
+    )
+    trading_costs = trading_costs[~trading_costs.index.duplicated(keep="first")]
+
     # All variables except the return series
     features = sorted(set(data["variable"]) - {"1MRet"})
 
     print("Analyzing portfolios …")
-    net_returns = analyze_portfolios(data, features, benchmark_returns)
+    net_returns, monthly_trading_costs = analyze_portfolios(
+        data, features, benchmark_returns, trading_costs
+    )
 
     print("Saving results …")
     save_net_returns_to_excel(net_returns, output_path)
+    save_trading_costs_to_excel(monthly_trading_costs, trading_cost_output_path)
     print("Done!")
 
 
 if __name__ == "__main__":
     DATA_PATH = "Normalized_T2_MasterCSV.csv"
     BENCHMARK_PATH = "Portfolio_Data.xlsx"
+    TRADING_COST_PATH = "Step Tcost.xlsx"
     OUTPUT_PATH = "T2_Optimizer.xlsx"
+    TRADING_COST_OUTPUT_PATH = "T2_Trading_Cost.xlsx"
 
-    run_portfolio_analysis(DATA_PATH, BENCHMARK_PATH, OUTPUT_PATH)
+    run_portfolio_analysis(
+        DATA_PATH,
+        BENCHMARK_PATH,
+        TRADING_COST_PATH,
+        OUTPUT_PATH,
+        TRADING_COST_OUTPUT_PATH,
+    )

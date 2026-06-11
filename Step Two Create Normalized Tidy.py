@@ -67,27 +67,33 @@ SPECIAL HANDLING:
    - Kept in original form without normalization
    - Preserves economic interpretation of returns
 
-2. Inverted Variables (Lower is Better):
+2. One-Month Lagged Signals (trade next month):
+   - 'Best PE ': holds momentum-excluded specific returns (not P/E levels).
+     Values are shifted forward one month BEFORE normalization so month-t
+     portfolio return is paired with month-(t-1) specific return (reversal).
+
+3. Inverted Variables (Lower is Better):
    - Financial Indicators: BEST Cash Flow, BEST Div Yield, BEST EPS 3Y, etc.
-   - Valuation Metrics: BEST PBK, BEST PE, BEST PS, EV/EBITDA, etc.
+   - Valuation Metrics: BEST PBK, BEST PE (specific-return reversal), BEST PS, EV/EBITDA, etc.
    - Technical Indicators: RSI, etc.
    - Economic Indicators: Currency Change, Debt to GDP, REER, 10Yr Bond 12, Bond Yield Change
    - Risk Metrics: Bloom Country Risk
    - For these variables, the normalization is multiplied by -1 to ensure higher values 
      consistently represent better conditions across all variables
 
-3. Missing Data Handling:
+4. Missing Data Handling:
    - Forward-filled within each country
    - Missing values after forward-fill set to 0
    - Logged for diagnostics
 
 VERSION HISTORY:
+- 2.1 (2026-06-03): One-month lag for Best PE specific-return reversal signal
 - 2.0 (2025-05-15): Complete rewrite with improved error handling
 - 1.5 (2025-03-22): Added support for inverted variables
 - 1.0 (2025-02-10): Initial production version
 
 AUTHOR: Financial Data Processing Team
-LAST UPDATED: 2025-06-17
+LAST UPDATED: 2026-06-03
 
 NOTES:
 - All normalizations use N-1 degrees of freedom for std dev (pandas default)
@@ -172,6 +178,20 @@ def normalize_data() -> None:
         copy_direct: List[str] = [
             '1MRet', '3MRet', '6MRet', '9MRet', '12MRet'  # Return sheets to copy directly
         ]
+
+        # Sheets that need a 1-month lag to avoid look-ahead.
+        # Step Zero uses yfinance monthly bars stamped to the first of the SAME
+        # month (end-of-May close → May-01), while every Bloomberg sheet goes
+        # through standardize_date() which shifts end-of-May → Jun-01.
+        # Without a lag, a P2P score stamped May-01 already embeds the May close
+        # and pairing it with 1MRet(May) (the May→Jun return) leaks the very
+        # return the signal contains. Shifting P2P by one row makes P2P(May)
+        # available only in June, matching the Bloomberg convention.
+        # Best PE: momentum-excluded specific returns; inverted for reversal.
+        lag_one_month: List[str] = [
+            'Best PE ',
+            'P2P',
+        ]
         
         # List of variables to invert normalization (where lower values are better)
         invert_norm: List[str] = [
@@ -203,6 +223,13 @@ def normalize_data() -> None:
                 # Convert dates to first of month for consistency
                 df['date'] = df['date'].dt.to_period('M').dt.to_timestamp()
                 df.set_index('date', inplace=True)
+
+                if sheet_name in lag_one_month:
+                    df = df.shift(1)
+                    print(
+                        f"  {sheet_name}: applied 1-month lag "
+                        f"(signal month t-1 -> trade month t)"
+                    )
                 
                 # Initialize dictionary to hold all variants
                 variants = {}
