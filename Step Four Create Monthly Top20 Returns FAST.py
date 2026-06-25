@@ -79,13 +79,12 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-warnings.filterwarnings("ignore")
+# THE shared band utility - Step Eight uses the identical functions, so the
+# factor->return direction (here) and the factor->country-weight direction
+# (Step Eight) are consistent BY CONSTRUCTION.
+from step_fuzzy_bands import SOFT_BAND_TOP, SOFT_BAND_CUTOFF, band_weights
 
-# ------------------------------------------------------------------
-# Fuzzy Logic Configuration (Same as Step Three)
-# ------------------------------------------------------------------
-SOFT_BAND_TOP = 0.15     # 15% ⇒ full weight
-SOFT_BAND_CUTOFF = 0.25  # 25% ⇒ zero weight
+warnings.filterwarnings("ignore")
 
 
 # ------------------------------------------------------------------
@@ -206,31 +205,19 @@ def analyze_portfolios(
             if n == 0:
                 continue
             
-            # Compute rank percentile (already sorted descending)
-            rank_pct = (np.arange(n) + 1) / n
-            
-            # Compute weights using vectorized numpy operations
-            weights = np.zeros(n)
-            
-            # Full weight for top band (< 15%)
-            top_mask = rank_pct < SOFT_BAND_TOP
-            weights[top_mask] = 1.0
-            
-            # Linearly decreasing weight inside the grey band (15% - 25%)
-            in_band = (rank_pct >= SOFT_BAND_TOP) & (rank_pct <= SOFT_BAND_CUTOFF)
-            weights[in_band] = 1.0 - (rank_pct[in_band] - SOFT_BAND_TOP) / (SOFT_BAND_CUTOFF - SOFT_BAND_TOP)
-            
-            # Filter to non-zero weights
-            nonzero_mask = weights > 0
-            if not nonzero_mask.any():
+            # SHARED BAND UTILITY: scores are pre-sorted descending, so
+            # method='first' ranking inside band_weights reproduces the
+            # positional ranks exactly. Eligibility (score AND return) was
+            # already applied by the merge/dropna in the cache build.
+            scores = pd.Series(factor_values, index=data_countries)
+            w = band_weights(scores, ascending=False)
+            if w.empty:
                 continue
             
-            weights_filtered = weights[nonzero_mask]
-            returns_filtered = return_values[nonzero_mask]
-            countries_filtered = data_countries[nonzero_mask]
-            
-            # Normalize weights to sum to 1
-            weights_filtered = weights_filtered / weights_filtered.sum()
+            nz = w[w > 0]
+            weights_filtered = nz.to_numpy()
+            countries_filtered = nz.index.to_numpy()
+            returns_filtered = pd.Series(return_values, index=data_countries).loc[nz.index].to_numpy()
             
             # Portfolio return = weighted sum
             portfolio_return = np.dot(weights_filtered, returns_filtered)

@@ -4,12 +4,11 @@ SCRIPT NAME: Step Fifteen Market Regime Analysis.py
 =============================================================================
 
 INPUT FILES:
-- /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Optimized_Country_Weights.xlsx:
-  Optimized strategy returns and performance data (Monthly_Returns sheet)
-- /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Optimized_Country_Weights.xlsx:
-  Weighted average factor exposures (Weighted_Avg_Factor_Exposure sheet)
-- /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Top_20_Exposure.csv:
-  Individual factor exposures for detailed regime analysis
+- T2_Final_Portfolio_Returns.xlsx:
+  - Sheet: 'Monthly Returns'
+  - Contains portfolio and equal weight benchmark returns with pre-computed Net Return column.
+- T2_Top_20_Exposure.csv:
+  - Individual factor exposures for detailed regime analysis
 
 OUTPUT FILES:
 - /Users/macbook2024/Library/CloudStorage/Dropbox/AAA Backup/A Complete/T2 Factor Timing/T2_Market_Regime_Analysis.xlsx:
@@ -100,16 +99,16 @@ def load_data():
     """
     logging.info("Loading data for market regime analysis...")
     
-    # Load optimized strategy returns and equal weight benchmark
-    returns_file = 'T2_Optimized_Country_Weights.xlsx'
-    returns_df = pd.read_excel(returns_file, sheet_name='Monthly_Returns', index_col=0)
+    # Load portfolio returns and equal weight benchmark
+    returns_file = 'T2_Final_Portfolio_Returns.xlsx'
+    returns_df = pd.read_excel(returns_file, sheet_name='Monthly Returns', index_col=0)
     returns_df.index = pd.to_datetime(returns_df.index)
     
-    # Calculate net returns (optimized strategy minus equal weight benchmark)
-    strategy_returns = returns_df['Optimized_Strategy'] - returns_df['Equal_Weight_Benchmark']
+    # Net Return is pre-computed by Step Nine (Portfolio - Equal Weight)
+    strategy_returns = returns_df['Net Return']
     
     # Use equal weight benchmark as market proxy for regime classification
-    market_returns = returns_df['Equal_Weight_Benchmark']
+    market_returns = returns_df['Equal Weight']
     
     logging.info(f"Loaded strategy net returns: {len(strategy_returns)} periods")
     logging.info(f"Loaded market returns for regime classification: {len(market_returns)} periods")

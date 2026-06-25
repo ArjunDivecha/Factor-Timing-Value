@@ -7,9 +7,9 @@ INPUT FILES:
 - T2_Country_Alphas.xlsx
     - Sheet: 'Country_Scores'
     - Contains country alpha scores across dates. Each row is a date; columns are countries.
-- T2_Optimized_Country_Weights.xlsx
-    - Sheet: 'Latest_Weights'
-    - Contains latest optimized country weights. Columns: 'Country', 'Weight' (or similar).
+- T2_Final_Country_Weights.xlsx
+    - Sheet: 'Latest Weights'
+    - Contains latest final country weights from Step Eight. First column is country name (may be 'Unnamed: 0'), second column is 'Weight'.
 
 OUTPUT FILES:
 - T2_FINAL_T60_VALUE.xlsx
@@ -20,7 +20,7 @@ LAST UPDATED: 2025-07-17
 AUTHOR: Cascade
 
 DESCRIPTION:
-This script extracts the most recent country alpha scores from the last row of the 'Country_Scores' sheet in T2_Country_Alphas.xlsx and the latest weights from the 'Latest_Weights' sheet in T2_Optimized_Country_Weights.xlsx, merges them by country, and writes a single Excel sheet with columns: Country, Country Alpha, Country Weight.
+This script extracts the most recent country alpha scores from the last row of the 'Country_Scores' sheet in T2_Country_Alphas.xlsx and the latest weights from the 'Latest Weights' sheet in T2_Final_Country_Weights.xlsx (Step Eight output), merges them by country, and writes a single Excel sheet with columns: Country, Country Alpha, Country Weight.
 
 =============================================================================
 """
@@ -30,7 +30,7 @@ import os
 
 # --- File names (local only) ---
 ALPHAS_FILE = 'T2_Country_Alphas.xlsx'
-WEIGHTS_FILE = 'T2_Optimized_Country_Weights.xlsx'
+WEIGHTS_FILE = 'T2_Final_Country_Weights.xlsx'
 OUTPUT_FILE = 'T2_FINAL_T60_VALUE.xlsx'
 
 def main():
@@ -46,11 +46,12 @@ def main():
     latest_scores = latest_scores.reset_index()
     latest_scores.columns = ['Country', 'Country Alpha']
 
-    # Read the latest weights
-    weights_df = pd.read_excel(WEIGHTS_FILE, sheet_name='Latest_Weights')
-    # Try to find the right column for weights
-    weight_col = 'Weight' if 'Weight' in weights_df.columns else weights_df.columns[-1]
-    weights_df = weights_df[['Country', weight_col]].copy()
+    # Read the latest weights (Step Eight output: 'Latest Weights' sheet)
+    weights_df = pd.read_excel(WEIGHTS_FILE, sheet_name='Latest Weights')
+    # The first column is the country name (may be 'Unnamed: 0'), second column is 'Weight'
+    country_col = weights_df.columns[0]
+    weight_col = 'Weight' if 'Weight' in weights_df.columns else weights_df.columns[1]
+    weights_df = weights_df[[country_col, weight_col]].copy()
     weights_df.columns = ['Country', 'Country Weight']
 
     # Merge on Country

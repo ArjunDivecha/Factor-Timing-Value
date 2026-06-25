@@ -116,12 +116,31 @@ from pathlib import Path
 from tqdm import tqdm
 
 # ===============================
-# FUZZY LOGIC CONFIGURATION
+# FUZZY LOGIC - SHARED UTILITY
 # ===============================
+# THE band logic lives in step_fuzzy_bands.py and is shared with Step Four,
+# so the factor->return direction (Step Four) and the factor->country-weight
+# direction (here) are identical BY CONSTRUCTION:
+#   - same eligibility rule (country needs a score AND a 1MRet that month)
+#   - same ranking (method='first'), same 15-25% taper, same normalization
+from step_fuzzy_bands import band_matrix
 
-# Fuzzy logic constants (same as Steps 3 and 4)
-SOFT_BAND_TOP   = 0.15   # 15% ⇒ full weight
-SOFT_BAND_CUTOFF = 0.25  # 25% ⇒ zero weight
+# ===============================
+# LIQUIDITY (ADV) POSITION CAP  -- shared utility
+# ===============================
+# At small AUM the dominant trading cost is market impact in thin single-country
+# ETFs (Denmark/EDEN etc.). The factor model is blind to liquidity, so it can
+# size positions you cannot trade. After building the country weights we cap each
+# name so a full rotation is at most LIQ_MAXPART of one day's $ADV, then water-fill
+# back to sum=1. Validated to add ~+1.2%/yr net at $7M (raises gross AND cuts
+# impact cost) and is basic risk management regardless. See step_liquidity_cap.py
+# and "Experiments Deep Dive/Step Tcost Impact Model.py".
+from step_liquidity_cap import load_adv, apply_liquidity_cap
+
+APPLY_LIQUIDITY_CAP = True          # set False to restore the pre-cap behavior
+LIQ_MAXPART = 0.20                  # full rotation <= 20% of one day's ADV
+LIQ_AUM = 7_000_000                 # portfolio value (drives the dollar cap)
+LIQ_PATH = "Experiments Deep Dive/IBKR_Liquidity.xlsx"  # per-ETF $ADV cache
 
 # ===============================
 # DATA LOADING AND PREPROCESSING
@@ -130,6 +149,7 @@ SOFT_BAND_CUTOFF = 0.25  # 25% ⇒ zero weight
 # Input file paths
 weights_file = "T2_rolling_window_weights.xlsx"
 factor_file = "Normalized_T2_MasterCSV.csv"
+returns_file = "Portfolio_Data.xlsx"   # Returns sheet drives band eligibility
 
 print("Loading data...")
 # Load feature weights from optimization model (prefer Net_Weights sheet for long–short)
@@ -206,6 +226,22 @@ print("\nProcessing all dates (vectorized per date)...")
 by_date = factor_df.groupby('date')
 
 def calculate_country_contributions_for_date(date_dt):
+    """
+    Translate this month's factor weights into country weights using THE
+    shared band utility (step_fuzzy_bands), replicating Step Four exactly:
+
+    1. ELIGIBILITY: a country enters a factor's band only if it has a score
+       AND a 1MRet this month (same inner-merge rule as Step Four). For the
+       live/latest month, where the whole 1MRet row is still empty, every
+       scored country is eligible (you can't condition live trading on
+       returns that don't exist yet).
+    2. MEAN-FILL REPLICATION: a held factor whose band is empty this month
+       (all scores or all returns missing) earned the cross-factor MEAN net
+       return in T2_Optimizer (Step Four's fillna(row.mean())). The exact
+       country-level replica: spread that factor's weight equally across
+       the TOP bands of every available factor. Without this, the weight
+       was silently dropped (e.g. 2000-05, 100% on Advance Decline_CS).
+    """
     if date_dt not in feature_weights_df.index:
         return None, None
 
@@ -220,38 +256,46 @@ def calculate_country_contributions_for_date(date_dt):
         return None, None
 
     pivot = slice_df.pivot(index='country', columns='variable', values='value')
-    common_factors = pivot.columns.intersection(w.index)
-    if len(common_factors) == 0:
+
+    # Factor universe = every weight-file column with scores this month
+    # (needed in full for the mean-fill redistribution, not just held ones)
+    all_factors = [c for c in feature_weights_df.columns if c in pivot.columns]
+    if len(all_factors) == 0:
         return None, None
 
-    V = pivot[common_factors]
-    w_vec = w.loc[common_factors]
+    # --- Rule 1: eligibility mask (score AND return) ---
+    if '1MRet' in pivot.columns and pivot['1MRet'].notna().any():
+        eligible = pivot['1MRet'].notna()
+    else:
+        eligible = pd.Series(True, index=pivot.index)  # live-month fallback
+    V = pivot[all_factors].where(eligible, other=np.nan)
 
-    rank_desc = V.rank(axis=0, method='first', ascending=False)
-    rank_asc = V.rank(axis=0, method='first', ascending=True)
-    counts = V.notna().sum(axis=0).replace(0, np.nan)
+    # Band matrix in each factor's own direction (negative weight -> bottom)
+    neg_cols = [f for f in all_factors if w.get(f, 0.0) < 0]
+    B_own = band_matrix(V, ascending_cols=neg_cols)
+    B_top = B_own if not neg_cols else band_matrix(V)
+    available = B_own.sum(axis=0) > 1e-12
 
-    counts_mat = np.tile(counts.values, (len(V.index), 1))
-    rank_desc_pct = rank_desc.values / counts_mat
-    rank_asc_pct = rank_asc.values / counts_mat
+    held = [f for f in w.index if f in all_factors]
+    contributions = {}
+    missing_weight = sum(w[f] for f in w.index if f not in all_factors)
+    for f in held:
+        if available[f]:
+            contributions[f] = B_own[f] * w[f]
+        else:
+            missing_weight += w[f]
 
-    pos_mask = (w_vec.values > 0).astype(float)
-    pos_mask_mat = np.tile(pos_mask, (len(V.index), 1))
-    rank_pct = np.where(pos_mask_mat > 0, rank_desc_pct, rank_asc_pct)
+    # --- Rule 2: mean-fill replication for empty-band factors ---
+    if abs(missing_weight) > 1e-12:
+        avail_cols = [f for f in all_factors if available[f]]
+        if avail_cols:
+            spread = missing_weight / len(avail_cols)
+            contributions['MeanFill'] = B_top[avail_cols].sum(axis=1) * spread
 
-    full_mask = (rank_pct < SOFT_BAND_TOP).astype(float)
-    in_band = (rank_pct >= SOFT_BAND_TOP) & (rank_pct <= SOFT_BAND_CUTOFF)
-    taper = 1.0 - (rank_pct - SOFT_BAND_TOP) / (SOFT_BAND_CUTOFF - SOFT_BAND_TOP)
-    taper = np.where(in_band, taper, 0.0)
-    fuzzy = full_mask + taper
+    if not contributions:
+        return None, None
 
-    col_sums = fuzzy.sum(axis=0)
-    col_sums[col_sums == 0] = 1.0
-    fuzzy_norm = fuzzy / col_sums
-
-    w_mat = np.tile(w_vec.values, (len(V.index), 1))
-    contrib = fuzzy_norm * w_mat
-    contributions_df = pd.DataFrame(contrib, index=V.index, columns=common_factors)
+    contributions_df = pd.DataFrame(contributions)
     country_weights = contributions_df.sum(axis=1)
 
     return country_weights, contributions_df
@@ -263,6 +307,27 @@ for date in tqdm(all_dates):
     if country_weights is None:
         continue
     all_weights.loc[date, country_weights.index] = country_weights.values
+
+# ===============================
+# LIQUIDITY (ADV) POSITION CAP
+# ===============================
+# Cap each country so a full rotation stays within LIQ_MAXPART of one day's ADV,
+# then water-fill back to sum=1. This deliberately breaks the exact
+# Step-Five == Step-Nine factor/country return identity (the factor model does
+# not know about liquidity); that trade is intentional and net-positive at small
+# AUM. Disable with APPLY_LIQUIDITY_CAP = False to recover the pre-cap weights.
+if APPLY_LIQUIDITY_CAP:
+    print(f"\nApplying liquidity cap (MAXPART={LIQ_MAXPART:.0%}, AUM=${LIQ_AUM:,.0f})...")
+    adv = load_adv(LIQ_PATH, list(all_weights.columns))
+    to_before = 0.5 * all_weights.diff().abs().sum(axis=1).dropna().mean()
+    all_weights, cap_report = apply_liquidity_cap(all_weights, adv, LIQ_AUM, LIQ_MAXPART)
+    to_after = 0.5 * all_weights.diff().abs().sum(axis=1).dropna().mean()
+    n_capped = int((cap_report["Cap_%"] < 99.9).sum())
+    print(f"  {n_capped} names capped; one-way turnover {to_before*100:.1f}% -> "
+          f"{to_after*100:.1f}%/mo (raw turnover may rise; COST falls)")
+    print("  most-binding names:")
+    print(cap_report[cap_report["Bind_Freq_%"] > 0]
+          [["ADV_USD", "Cap_%", "Bind_Freq_%"]].round(2).head(8).to_string())
 
 # ===============================
 # VALIDATION AND ANALYSIS

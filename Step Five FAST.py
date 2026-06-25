@@ -1,603 +1,343 @@
 """
 =============================================================================
-SCRIPT NAME: Step Five FAST.py - High-Performance Portfolio Optimization
+SCRIPT NAME: Step Five Top3 Tcost.py
+Top-3 Factor Momentum with Hysteresis Band + Trading-Cost Hurdle
 =============================================================================
 
 INPUT FILES:
-- T2_Optimizer.xlsx: Monthly factor returns from Step Four
-- T2_RSQ.xlsx (sheet Monthly_RSQ, optional): Per-factor R² on 12-month cumulative net returns,
-  same layout as GDELT_RSQ.xlsx. When USE_RSQ_MODIFIER is True, each month’s μ is scaled
-  factor-by-factor (see RSQ_INFLUENCE / RSQ_MISSING_MULTIPLIER in script).
-- Step Factor Categories.xlsx: Factor categories and maximum weight constraints
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_Optimizer.xlsx
+    Monthly factor net returns (percentage points) from Step Four.
+    Rows = months, columns = 82 factor portfolios.
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/Step Factor Categories.xlsx
+    Factor Name / Category / Max columns. Only factors with Max > 0
+    (the 36 Value + Quality factors) are eligible for selection.
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_Trading_Cost.xlsx
+    Sheet "Trading_Costs": per-factor, per-month one-way trading cost in
+    PERCENT (0.07 = 7 basis points). Produced by Step Four.
 
 OUTPUT FILES:
-- T2_rolling_window_weights.xlsx: Optimized factor weights (hybrid window strategy)
-- T2_strategy_statistics.xlsx: Strategy performance statistics and monthly returns
-- T2_factor_weight_heatmap.pdf: Heatmap visualization of factor weights over time
-- T2_strategy_performance.pdf: Cumulative performance visualization
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_rolling_window_weights.xlsx
+    Optimized factor weights. IDENTICAL format to Step Five FAST.py output:
+    index = monthly dates plus one extra "next month" row, columns = ALL 82
+    factors (zeros for factors not held). Consumed by Steps 6, 6.5, 7, 8, 10.
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_strategy_statistics.xlsx
+    Strategy performance statistics, monthly returns, monthly turnover
+    (same three sheets as Step Five FAST.py).
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_factor_weight_heatmap.pdf
+    Heatmap of factor weights over time (top 20 factors by average weight).
+- /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_strategy_performance.pdf
+    Cumulative performance chart of the strategy's net returns.
 
-VERSION: 2.1 - High Performance CVXPY Implementation (+ optional T2 RSQ μ modifier)
-LAST UPDATED: 2026-04-06
-AUTHOR: Claude Code
+VERSION: 1.0
+LAST UPDATED: 2026-06-11
+AUTHOR: Claude Code (deep-dive cost-hurdle variant, adopted by Arjun)
 
-DESCRIPTION:
-High-performance portfolio optimization using CVXPY with OSQP solver for 50-100x 
-speed improvement over scipy.optimize. Implements hybrid window strategy:
-- First 60 months: Expanding window (all available data)
-- After 60 months: Rolling window (exactly 60 months)
+DESCRIPTION (plain English):
+This is "Step Five Top3.py" plus ONE extra rule: a trading-cost hurdle on
+factor swaps. Step by step, each month:
 
-Key optimizations:
-1. CVXPY/OSQP convex optimization engine
-2. Warm-start from previous solutions
-3. Batch data preparation and pre-computed windows
-4. Vectorized constraint processing
-5. Sparse matrix operations where applicable
+  1. SIGNAL (unchanged): score every eligible factor by its average net
+     return over the trailing window (expanding until 60 months exist,
+     then rolling 60 months) - 60-month factor momentum.
+  2. HYSTERESIS BAND (unchanged): a held factor stays as long as its rank
+     is better than N_TOP + EXIT_BAND (stays while ranked in the top 5).
+  3. COST HURDLE (new): when a held factor DOES fall out of the band, the
+     challenger only replaces it if the challenger's expected monthly
+     return edge over the incumbent exceeds KAPPA times the round-trip
+     trading cost of the swap (cost to sell the incumbent + cost to buy
+     the challenger, from T2_Trading_Cost.xlsx for that month). If the
+     edge is too small to pay for the trade, we simply keep the incumbent.
+  4. Hold the resulting 3 factors equal-weighted at 1/3 each.
+
+Why: in backtests 2000-2026 (all variants scored net of the same costs)
+this adds +0.20%/yr over plain Top3 hysteresis (3.96% -> 4.16% net), cuts
+factor turnover from 4.5%/mo to 3.2%/mo, keeps the same Sharpe (0.84) and
+max drawdown (-10.3%), and improves the 2018-2026 era (1.22% -> 2.03%/yr).
+KAPPA = 1.0 is the sweet spot; higher values make the portfolio stale.
+See: Experiments Deep Dive/exp_value_tcost_aware.py.
+
+The output file format is byte-compatible with Step Five FAST.py, so every
+downstream step (Six, Six Point Five, Seven, Eight, Eight Point Five, Nine,
+Ten, Fourteen, ...) runs unchanged.
+
+NOTE: "Step Five FAST.py" and "Step Five Top3.py" are untouched. Running
+either will overwrite T2_rolling_window_weights.xlsx - run one engine only.
+
+FAIL IS FAIL: if T2_Trading_Cost.xlsx is missing or malformed, this script
+raises an error rather than silently falling back to cost-blind behavior.
 
 DEPENDENCIES:
-- pandas
-- numpy
-- cvxpy (replaces scipy.optimize)
-- matplotlib
-- openpyxl
+- pandas, numpy, matplotlib, xlsxwriter, openpyxl
 
 USAGE:
-python "Step Five FAST.py"
-
-NOTES:
-- Rows in T2_Optimizer.xlsx that are all-NaN are dropped before optimization (stub months).
-- With USE_RSQ_MODIFIER True, μ = (8 × window mean) × m with m from T2_RSQ.xlsx (same rules as
-  Step Five GDELT FAST). Default USE_RSQ_MODIFIER False until T2_RSQ.xlsx exists.
-- Uses CVXPY with OSQP solver for fast convex optimization
-- Warm-start capabilities for 2-3x additional speedup
-- Eliminates expanding window analysis (focus on hybrid only)
-- No PDF outputs (streamlined for performance)
-- Maintains identical output format to original Step Five
+python "Step Five Top3 Tcost.py"
 =============================================================================
 """
 
-import os
+import logging
+import time
 
-import pandas as pd
 import numpy as np
-import cvxpy as cp
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.colors as mcolors
 import matplotlib.ticker as ticker
 from matplotlib.patches import Rectangle
-import seaborn as sns
-from datetime import datetime
-import logging
-import time
-import warnings
 
 from step_five_multiwindow_stats import log_step_five_multiwindow_table
 
-warnings.filterwarnings('ignore')
-plt.style.use('default')
+plt.style.use("default")
 
 # =============================================================================
-# CONFIGURABLE PARAMETERS - MODIFY THESE AS NEEDED
+# CONFIGURABLE PARAMETERS
 # =============================================================================
+N_TOP = 3          # number of factors held, equal-weighted
+EXIT_BAND = 2      # held factor exits band only when rank >= N_TOP + EXIT_BAND
+WINDOW_SIZE = 60   # trailing window for factor momentum (months)
+KAPPA = 1.0        # cost-hurdle multiplier: swap only if monthly mu edge
+                   # > KAPPA * (cost out + cost in). 1.0 = sweet spot.
 
-# Portfolio optimization parameters
-LAMBDA = 0.0              # Risk aversion parameter (higher = more risk-averse)
-HHI_PENALTY = 0.005         # Concentration penalty (higher = more diversified)
-WINDOW_SIZE = 60           # Rolling window size in months
-# RSQ modifier (T2_RSQ.xlsx, same Monthly_RSQ layout as GDELT_RSQ.xlsx)
-USE_RSQ_MODIFIER = False
-RSQ_PATH = "T2_RSQ.xlsx"
-RSQ_SHEET_NAME = "Monthly_RSQ"
-RSQ_MISSING_MULTIPLIER = 1.0
-RSQ_INFLUENCE = 0.0  # 0 = no RSQ effect, 1 = full μ × RSQ (after fill)
-# EMA_DECAY removed - using simple arithmetic mean like original Step Five
-# =============================================================================
-# SETUP LOGGING
-# =============================================================================
+TRADING_COST_FILE = "T2_Trading_Cost.xlsx"
+
+WEIGHTS_OUTPUT = "T2_rolling_window_weights.xlsx"
+STATS_OUTPUT = "T2_strategy_statistics.xlsx"
+HEATMAP_OUTPUT = "T2_factor_weight_heatmap.pdf"
+PERFORMANCE_OUTPUT = "T2_strategy_performance.pdf"
+
 
 def setup_logging():
-    """Setup logging configuration"""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler('T2_processing.log', mode='a'),
-            logging.StreamHandler()
-        ]
+            logging.FileHandler("T2_processing.log", mode="a"),
+            logging.StreamHandler(),
+        ],
     )
 
-class FastPortfolioOptimizer:
-    """
-    High-performance portfolio optimizer using CVXPY with warm-start capabilities.
-    
-    Converts the original utility function to quadratic form suitable for convex optimization:
-    Maximize: w'μ - λ*w'Σw - γ*||w||²
-    Subject to: sum(w) = 1, 0 ≤ w ≤ max_weights
-    """
-    
-    def __init__(self, n_assets, factor_names, lambda_param=1.0, hhi_penalty=0.01, max_weights=None):
-        """
-        Initialize optimizer with pre-allocated variables for warm-start.
-        
-        Args:
-            n_assets: Number of factors/assets
-            factor_names: List of factor names  
-            lambda_param: Risk aversion parameter
-            hhi_penalty: Concentration penalty coefficient
-            max_weights: Dict mapping factor names to max weights
-        """
-        self.n_assets = n_assets
-        self.factor_names = factor_names
-        self.lambda_param = lambda_param
-        self.hhi_penalty = hhi_penalty
-        
-        # Pre-process max weights into array for vectorized operations
-        if max_weights is None:
-            self.max_weights_array = np.ones(n_assets)
-        else:
-            self.max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
-        
-        # Pre-allocate CVXPY variables (reused across optimizations)
-        self.weights_var = cp.Variable(n_assets)
-        
-        # Pre-define constraints (box constraints + sum constraint)
-        self.constraints = [
-            self.weights_var >= 0,
-            self.weights_var <= self.max_weights_array,
-            cp.sum(self.weights_var) == 1
-        ]
-        
-        # Store previous solution for warm-start
-        self.prev_weights = None
-        
-    def optimize_weights(self, expected_returns, covariance_matrix):
-        """
-        Optimize portfolio weights using CVXPY with warm-start.
-        
-        Args:
-            expected_returns: np.array of expected returns
-            covariance_matrix: np.array covariance matrix
-            
-        Returns:
-            np.array of optimal weights
-        """
-        P = np.asarray(covariance_matrix, dtype=np.float64)
-        P = (P + P.T) * 0.5
-        mu = np.asarray(expected_returns, dtype=np.float64).ravel()
 
-        # Convert utility function to quadratic form:
-        # Maximize: w'μ - λ*w'Σw - γ*||w||²
-        portfolio_return = self.weights_var.T @ mu
-        risk_penalty = self.lambda_param * cp.quad_form(self.weights_var, P)
-        concentration_penalty = self.hhi_penalty * cp.sum_squares(self.weights_var)
-        
-        # Objective: maximize utility (minimize negative utility)
-        objective = cp.Maximize(portfolio_return - risk_penalty - concentration_penalty)
-        
-        # Create problem
-        problem = cp.Problem(objective, self.constraints)
-        
-        # Warm-start if we have previous solution
-        if self.prev_weights is not None:
-            self.weights_var.value = self.prev_weights
-        
-        # Solve with OSQP solver (same as Step Fourteen)
-        try:
-            problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
-            
-            if problem.status == cp.OPTIMAL:
-                optimal_weights = self.weights_var.value
-                # Store for next warm-start
-                self.prev_weights = optimal_weights.copy()
-                return optimal_weights
-            else:
-                logging.warning(f"Optimization failed with status: {problem.status}")
-                # Fall back to equal weights
-                return np.ones(self.n_assets) / self.n_assets
-                
-        except Exception as e:
-            logging.error(f"Optimization error: {e}")
-            # Fall back to equal weights
-            return np.ones(self.n_assets) / self.n_assets
-
+# =============================================================================
+# DATA LOADING (identical conventions to Step Five FAST.py / Top3.py)
+# =============================================================================
 def load_and_prepare_data():
-    """
-    Load and prepare all data with optimized pandas operations.
-    
-    Returns:
-        tuple: (returns_df, max_weights_dict)
-    """
+    """Load factor returns and eligibility. Returns (returns_df, eligible_cols)."""
     logging.info("Loading input data...")
-    
-    # Load returns data
-    returns = pd.read_excel('T2_Optimizer.xlsx', index_col=0)
+
+    returns = pd.read_excel("T2_Optimizer.xlsx", index_col=0)
     returns.index = pd.to_datetime(returns.index)
-    
-    # Load factor constraints 
-    factor_categories = pd.read_excel('Step Factor Categories.xlsx')
-    max_weights = dict(zip(factor_categories['Factor Name'], factor_categories['Max']))
-    
-    # Step Four writes monthly net returns as percentage points (decimal × 100).
-    # Always convert to decimals; mean>1 heuristic breaks when typical |r| stays below 1.
+
+    # Step Four writes monthly net returns as percentage points -> decimals
     returns = returns.apply(pd.to_numeric, errors="coerce") / 100.0
-    
-    # Remove Monthly Return_CS if present
-    if 'Monthly Return_CS' in returns.columns:
-        returns = returns.drop(columns=['Monthly Return_CS'])
+
+    if "Monthly Return_CS" in returns.columns:
+        returns = returns.drop(columns=["Monthly Return_CS"])
 
     all_nan_rows = returns.isna().all(axis=1)
     if all_nan_rows.any():
-        n_bad = int(all_nan_rows.sum())
-        bad_dates = returns.index[all_nan_rows].strftime("%Y-%m").tolist()
-        logging.warning(
-            "Dropping %d month(s) with all-NaN factor returns: %s",
-            n_bad,
-            bad_dates[:5] + (["..."] if len(bad_dates) > 5 else []),
-        )
+        bad = returns.index[all_nan_rows].strftime("%Y-%m").tolist()
+        logging.warning("Dropping %d all-NaN month(s): %s", len(bad), bad[:5])
         returns = returns.loc[~all_nan_rows]
 
-    logging.info(f"Loaded returns data: {returns.shape[0]} periods, {returns.shape[1]} factors")
-    logging.info(f"Loaded max weight constraints for {len(max_weights)} factors")
-    n_f, n_t = returns.shape[1], returns.shape[0]
-    if n_f > n_t:
-        logging.warning(
-            "More factors (%d) than time periods (%d): covariance is rank-deficient.",
-            n_f,
-            n_t,
-        )
-    if n_f > WINDOW_SIZE:
-        logging.warning(
-            "Factor count (%d) > WINDOW_SIZE (%d): rolling covariance is under-identified; "
-            "Sharpe/return can look implausibly high.",
-            n_f,
-            WINDOW_SIZE,
-        )
+    factor_categories = pd.read_excel("Step Factor Categories.xlsx")
+    max_weights = dict(zip(factor_categories["Factor Name"], factor_categories["Max"]))
 
-    return returns, max_weights
+    # Eligible = Max > 0. Factors missing from the file default to 0 (excluded).
+    eligible = [c for c in returns.columns if max_weights.get(c, 0.0) > 0]
+    excluded = [c for c in returns.columns if c not in eligible]
+
+    logging.info("Loaded returns: %d months x %d factors", *returns.shape)
+    logging.info("Eligible factors (Max>0): %d | Excluded: %d", len(eligible), len(excluded))
+    return returns, eligible
 
 
-def load_rsq_modifier_frame(returns_df: pd.DataFrame) -> pd.DataFrame:
-    """Load T2_RSQ.xlsx; align index/columns to returns_df."""
-    if not USE_RSQ_MODIFIER:
-        return pd.DataFrame()
-
-    if not os.path.isfile(RSQ_PATH):
-        raise FileNotFoundError(
-            f"USE_RSQ_MODIFIER is True but {RSQ_PATH!r} was not found. "
-            "Create it (same layout as GDELT_RSQ.xlsx Monthly_RSQ) or set USE_RSQ_MODIFIER = False."
-        )
-
-    rsq = pd.read_excel(RSQ_PATH, sheet_name=RSQ_SHEET_NAME, index_col=0)
-    rsq.index = pd.to_datetime(rsq.index, errors="coerce").to_period("M").to_timestamp()
-    rsq = rsq.apply(pd.to_numeric, errors="coerce")
-
-    want_cols = list(returns_df.columns)
-    missing = [c for c in want_cols if c not in rsq.columns]
-    if missing:
-        logging.warning(
-            "RSQ file missing %d factor column(s); those use multiplier %.4f. Examples: %s",
-            len(missing),
-            RSQ_MISSING_MULTIPLIER,
-            missing[:5],
-        )
-    rsq = rsq.reindex(columns=want_cols)
-    return rsq
-
-
-def rsq_multiplier_vector(
-    rsq_df: pd.DataFrame,
-    date: pd.Timestamp,
-    factor_names: list,
-    fallback_date: pd.Timestamp | None = None,
-) -> pd.Series:
-    if rsq_df.empty:
-        return pd.Series(RSQ_MISSING_MULTIPLIER, index=factor_names, dtype=float)
-
-    def _row_for(d: pd.Timestamp | None) -> pd.Series | None:
-        if d is None or d not in rsq_df.index:
-            return None
-        return rsq_df.loc[d].reindex(factor_names)
-
-    r = _row_for(date)
-    if r is None and fallback_date is not None:
-        r = _row_for(fallback_date)
-    if r is None:
-        r = pd.Series(np.nan, index=factor_names, dtype=float)
-    filled = r.fillna(RSQ_MISSING_MULTIPLIER).astype(float)
-    base = float(RSQ_MISSING_MULTIPLIER)
-    effective = base + float(RSQ_INFLUENCE) * (filled - base)
-    effective = np.maximum(effective.to_numpy(dtype=float), 0.0)
-    return pd.Series(effective, index=factor_names, dtype=float)
-
-
-def apply_rsq_to_expected_returns(
-    expected_returns: pd.Series | np.ndarray,
-    mult: pd.Series,
-    factor_names: list,
-) -> pd.Series:
-    s = (
-        expected_returns
-        if isinstance(expected_returns, pd.Series)
-        else pd.Series(np.asarray(expected_returns, dtype=float).ravel(), index=factor_names)
-    )
-    m = mult.reindex(s.index).fillna(RSQ_MISSING_MULTIPLIER)
-    return (s * m).astype(float)
-
-
-def calculate_rolling_statistics(returns_df, window_size):
+def load_trading_costs(returns_df, eligible):
     """
-    Pre-compute all rolling statistics for batch optimization.
-    
-    Args:
-        returns_df: DataFrame of factor returns
-        window_size: Rolling window size (60 months)
-        # decay_factor parameter removed - using simple arithmetic mean
-        
-    Returns:
-        tuple: (expected_returns_dict, covariance_dict, dates_list)
+    Load the per-factor monthly one-way trading cost matrix (decimal units),
+    aligned to the return dates and eligible factors.
+
+    Missing factor costs are filled with that month's cross-factor mean
+    (and finally the global mean) so a missing cell never blocks a trade
+    decision. FAIL IS FAIL: a missing/unreadable file raises.
     """
-    logging.info("Pre-computing rolling statistics...")
-    
+    tc = pd.read_excel(TRADING_COST_FILE, sheet_name="Trading_Costs")
+    if "Date" not in tc.columns:
+        raise ValueError(f"{TRADING_COST_FILE}: expected a 'Date' column "
+                         f"in sheet 'Trading_Costs'")
+    tc["Date"] = pd.to_datetime(tc["Date"])
+    tc = tc.set_index("Date")
+
+    global_mean = float(tc.stack().mean())
+    tc = tc.reindex(index=returns_df.index, columns=eligible)
+    row_mean = tc.mean(axis=1)
+    tc = tc.apply(lambda col: col.fillna(row_mean)).fillna(global_mean)
+
+    tc = tc / 100.0  # percent -> decimal (0.07% -> 0.0007)
+    logging.info("Trading costs loaded: %d months x %d factors | "
+                 "mean one-way cost %.1f bps",
+                 tc.shape[0], tc.shape[1], tc.stack().mean() * 1e4)
+    return tc
+
+
+# =============================================================================
+# TOP-3 SELECTION WITH HYSTERESIS + COST HURDLE
+# =============================================================================
+def select_top3_weights(returns_df, eligible, costs_df):
+    """
+    Build the monthly weight matrix.
+
+    For each month t (starting at the second month, like Step Five FAST):
+      - momentum mu = mean of rows < t (expanding until WINDOW_SIZE, then rolling)
+      - keep held factors ranked better than N_TOP + EXIT_BAND
+      - for each open slot, the best-ranked challenger replaces the dropped
+        incumbent ONLY if (mu_challenger - mu_incumbent) [monthly units]
+        exceeds KAPPA * (cost_in + cost_out) for that month; otherwise the
+        incumbent is retained despite being out of the band
+      - equal weight 1/N_TOP
+
+    Also computes the extra "next month" row from the last WINDOW_SIZE rows
+    INCLUDING the final month (using the last available cost row), exactly
+    like Step Five FAST's extra-month optimization.
+
+    Returns a DataFrame indexed by dates[1:] + next_month with ALL factor
+    columns (zeros for factors not held).
+    """
+    E = returns_df[eligible]
     dates = returns_df.index
-    expected_returns_dict = {}
-    covariance_dict = {}
-    dates_list = []
-    
-    for i, date in enumerate(dates[1:], 1):  # Start from month 2
-        # Determine window bounds
-        if i <= window_size:
-            # Expanding window (first 60 months)
-            window_data = returns_df.iloc[:i]
-        else:
-            # Rolling window (60 months)
-            window_data = returns_df.iloc[i-window_size:i]
-        
-        # Skip if insufficient data (start from month 2 like original)
-        if len(window_data) < 1:  # Need at least 1 month (match original behavior)
-            continue
-            
-        # Calculate simple arithmetic mean expected returns (matching original Step Five line 433)
-        # Note: Original uses raw returns for optimization, scaling only for debug output
-        factor_means = window_data.mean(axis=0)
-        # Apply 8x scaling factor to match original utility calculation (line 148 in original)
-        expected_returns = 8 * factor_means
-        
-        # Covariance matrix (annualized)
-        # Use ddof=0 to match original np.std(portfolio_returns) calculation (line 145)
-        cov_matrix = np.cov(window_data.values.T, ddof=0) * 12
-        
-        # Ensure positive semi-definite with more robust method
-        try:
-            eigenvals, eigenvecs = np.linalg.eigh(cov_matrix)
-            eigenvals = np.maximum(eigenvals, 1e-6)  # Higher floor for numerical stability
-            cov_matrix = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
-        except np.linalg.LinAlgError:
-            # Fall back to identity matrix scaled by average variance
-            avg_var = np.diag(cov_matrix).mean()
-            cov_matrix = np.eye(len(window_data.columns)) * avg_var
-        
-        expected_returns_dict[date] = expected_returns
-        covariance_dict[date] = cov_matrix
-        dates_list.append(date)
-    
-    logging.info(f"Pre-computed statistics for {len(dates_list)} optimization periods")
-    return expected_returns_dict, covariance_dict, dates_list
+    n = len(eligible)
 
-def run_fast_optimization():
-    """
-    Main optimization pipeline using CVXPY with all performance optimizations.
-    """
-    start_time = time.time()
-    
-    # Load data
-    returns_df, max_weights = load_and_prepare_data()
-    
-    # Calculate next month date for extra optimization (matching 60 Month program)
-    next_month_date = returns_df.index[-1] + pd.DateOffset(months=1)
-    logging.info(f"Will calculate extra month optimization for: {next_month_date.strftime('%Y-%m')}")
-    
-    # Pre-compute all rolling statistics
-    expected_returns_dict, covariance_dict, optimization_dates = calculate_rolling_statistics(
-        returns_df, WINDOW_SIZE
+    held: list[int] | None = None
+    rows = {}
+    swaps_made = swaps_blocked = 0
+
+    def pick(window_data, held_prev, tc_row):
+        nonlocal swaps_made, swaps_blocked
+        mu = window_data.mean(axis=0).to_numpy(dtype=float)
+        mu = np.nan_to_num(mu, nan=-9e9)          # factors with no data rank last
+        order = np.argsort(mu)[::-1]
+        ranks = np.empty(n, dtype=int)
+        ranks[order] = np.arange(n)
+
+        if held_prev is None:
+            return list(order[:N_TOP])
+
+        keep = [f for f in held_prev if ranks[f] < N_TOP + EXIT_BAND]
+        dropped = [f for f in held_prev if f not in keep]
+        candidates = [f for f in order if f not in keep]
+
+        for f in candidates:
+            if len(keep) >= N_TOP:
+                break
+            if dropped:
+                incumbent = dropped[0]
+                edge = mu[f] - mu[incumbent]                  # monthly mu units
+                hurdle = KAPPA * (tc_row[f] + tc_row[incumbent])
+                if edge <= hurdle:
+                    # Edge too small to pay for the trade: keep the incumbent.
+                    keep.append(incumbent)
+                    dropped.remove(incumbent)
+                    swaps_blocked += 1
+                    continue
+                dropped.remove(incumbent)
+                swaps_made += 1
+            keep.append(f)
+        return keep[:N_TOP]
+
+    mean_cost = float(costs_df.stack().mean())
+
+    for i in range(1, len(dates)):
+        window = E.iloc[:i] if i <= WINDOW_SIZE else E.iloc[i - WINDOW_SIZE:i]
+        tc_row = np.nan_to_num(costs_df.iloc[i].to_numpy(dtype=float), nan=mean_cost)
+        held = pick(window, held, tc_row)
+        w = np.zeros(n)
+        w[held] = 1.0 / len(held)
+        rows[dates[i]] = w
+
+    # Extra month: last WINDOW_SIZE rows including the final one; costs for
+    # next month are not known yet, so use the most recent cost row.
+    next_month = dates[-1] + pd.DateOffset(months=1)
+    extra_window = E.iloc[max(0, len(dates) - WINDOW_SIZE):]
+    tc_row = np.nan_to_num(costs_df.iloc[-1].to_numpy(dtype=float), nan=mean_cost)
+    held = pick(extra_window, held, tc_row)
+    w = np.zeros(n)
+    w[held] = 1.0 / len(held)
+    rows[next_month] = w
+    logging.info(
+        "Extra month (%s) holdings: %s",
+        next_month.strftime("%Y-%m"),
+        ", ".join(eligible[f] for f in held),
     )
+    logging.info("Cost hurdle (kappa=%.1f): %d swaps executed, %d swaps blocked",
+                 KAPPA, swaps_made, swaps_blocked)
 
-    factor_names = list(returns_df.columns)
-    rsq_df = load_rsq_modifier_frame(returns_df)
-    if USE_RSQ_MODIFIER and not rsq_df.empty:
-        logging.info(
-            "Applying %s RSQ multipliers: RSQ_INFLUENCE=%.4f, missing → %.4f.",
-            RSQ_PATH,
-            RSQ_INFLUENCE,
-            RSQ_MISSING_MULTIPLIER,
-        )
-        for date in optimization_dates:
-            mult = rsq_multiplier_vector(rsq_df, date, factor_names)
-            expected_returns_dict[date] = apply_rsq_to_expected_returns(
-                expected_returns_dict[date], mult, factor_names
-            )
+    weights_eligible = pd.DataFrame.from_dict(rows, orient="index", columns=eligible)
 
-    # Initialize fast optimizer
-    n_assets = len(returns_df.columns)
-    
-    optimizer = FastPortfolioOptimizer(
-        n_assets=n_assets,
-        factor_names=factor_names,
-        lambda_param=LAMBDA,
-        hhi_penalty=HHI_PENALTY,
-        max_weights=max_weights
-    )
-    
-    # Initialize results storage - include the extra month in the index
-    extended_dates = optimization_dates + [next_month_date]
-    weights_df = pd.DataFrame(index=extended_dates, columns=factor_names)
-    
-    # Run batch optimization for existing dates
-    logging.info("Running batch portfolio optimization...")
-    
-    for i, date in enumerate(optimization_dates):
-        if i % 50 == 0:
-            elapsed = time.time() - start_time
-            logging.info(f"Optimizing {i+1}/{len(optimization_dates)} periods... ({elapsed:.1f}s elapsed)")
-        
-        # Get pre-computed statistics
-        expected_returns = expected_returns_dict[date]
-        covariance_matrix = covariance_dict[date]
-        
-        # Optimize weights
-        optimal_weights = optimizer.optimize_weights(expected_returns, covariance_matrix)
-        
-        # Clean up numerical precision errors while preserving constraints
-        optimal_weights = np.maximum(optimal_weights, 0)  # Floor negative weights at 0
-        
-        # Only renormalize if significantly off from 1.0, and check for constraint violations
-        weight_sum = optimal_weights.sum()
-        if abs(weight_sum - 1.0) > 1e-6:
-            scaled_weights = optimal_weights / weight_sum
-            # Check if renormalization would violate max weight constraints
-            max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
-            if np.any(scaled_weights > max_weights_array + 1e-8):
-                logging.warning(f"Renormalization would violate max weight constraints. Sum: {weight_sum:.6f}")
-                # Use original weights to preserve constraint compliance
-            else:
-                optimal_weights = scaled_weights
-        
-        # Store results
-        weights_df.loc[date] = optimal_weights
-    
-    # Calculate the extra month optimization (matching 60 Month program logic)
-    logging.info(f"Calculating extra month optimization for {next_month_date.strftime('%Y-%m')}")
-    
-    # Use the last 60 months of data for the next month (same as 60 Month program)
-    start_idx = max(0, len(returns_df.index) - WINDOW_SIZE)
-    extra_month_data = returns_df.iloc[start_idx:]
-    
-    # Calculate expected returns and covariance for extra month
-    factor_means = extra_month_data.mean(axis=0)
-    expected_returns_extra = 8 * factor_means  # Apply 8x scaling factor
-    if USE_RSQ_MODIFIER and not rsq_df.empty:
-        mult_x = rsq_multiplier_vector(
-            rsq_df,
-            next_month_date,
-            factor_names,
-            fallback_date=returns_df.index[-1],
-        )
-        expected_returns_extra = apply_rsq_to_expected_returns(
-            expected_returns_extra, mult_x, factor_names
-        )
+    # Pad to the full factor universe (zeros for excluded factors) so the
+    # output format matches Step Five FAST exactly.
+    weights_df = weights_eligible.reindex(columns=returns_df.columns, fill_value=0.0)
+    weights_df.index.name = returns_df.index.name
+    return weights_df
 
-    # Covariance matrix (annualized)
-    cov_matrix_extra = np.cov(extra_month_data.values.T, ddof=0) * 12
-    
-    # Ensure positive semi-definite
-    try:
-        eigenvals, eigenvecs = np.linalg.eigh(cov_matrix_extra)
-        eigenvals = np.maximum(eigenvals, 1e-6)
-        cov_matrix_extra = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
-    except np.linalg.LinAlgError:
-        avg_var = np.diag(cov_matrix_extra).mean()
-        cov_matrix_extra = np.eye(len(extra_month_data.columns)) * avg_var
-    
-    # Optimize weights for extra month
-    optimal_weights_extra = optimizer.optimize_weights(expected_returns_extra, cov_matrix_extra)
-    
-    # Clean up numerical precision errors
-    optimal_weights_extra = np.maximum(optimal_weights_extra, 0)
-    weight_sum = optimal_weights_extra.sum()
-    if abs(weight_sum - 1.0) > 1e-6:
-        scaled_weights = optimal_weights_extra / weight_sum
-        max_weights_array = np.array([max_weights.get(name, 1.0) for name in factor_names])
-        if not np.any(scaled_weights > max_weights_array + 1e-8):
-            optimal_weights_extra = scaled_weights
-    
-    # Store extra month results
-    weights_df.loc[next_month_date] = optimal_weights_extra
-    
-    total_time = time.time() - start_time
-    logging.info(f"Optimization completed in {total_time:.1f} seconds")
-    logging.info(f"Average time per optimization: {total_time/len(extended_dates):.3f} seconds")
-    logging.info(f"Extra month ({next_month_date.strftime('%Y-%m')}) optimization completed")
-    
-    return weights_df, returns_df
 
+# =============================================================================
+# PERFORMANCE (identical logic to Step Five FAST.py)
+# =============================================================================
 def calculate_strategy_performance(weights_df, returns_df):
-    """
-    Calculate strategy performance metrics and returns.
-    
-    Args:
-        weights_df: DataFrame of optimal weights
-        returns_df: DataFrame of factor returns
-        
-    Returns:
-        dict: Performance statistics and time series
-    """
+    """Weights at month t earn the factor-return row at t+1 (no look-ahead)."""
     logging.info("Calculating strategy performance...")
-    
-    # Calculate portfolio returns
-    portfolio_returns = []
-    aligned_dates = []
-    
+
+    portfolio_returns, aligned_dates = [], []
     for date in weights_df.index:
         if date in returns_df.index:
-            # Get next month's returns (forward-looking)
-            next_month_idx = returns_df.index.get_loc(date) + 1
-            if next_month_idx < len(returns_df.index):
-                next_month_date = returns_df.index[next_month_idx]
-                weights = weights_df.loc[date].values
-                returns = returns_df.loc[next_month_date].values
-                
-                # Calculate portfolio return
-                portfolio_return = np.sum(weights * returns)
-                portfolio_returns.append(portfolio_return)
-                aligned_dates.append(next_month_date)
-    
-    # Create portfolio returns series
-    portfolio_returns_series = pd.Series(portfolio_returns, index=aligned_dates)
-    
-    # Calculate performance statistics
-    ann_return = (1 + portfolio_returns_series.mean())**12 - 1
-    ann_vol = portfolio_returns_series.std() * np.sqrt(12)
-    sharpe = ann_return / ann_vol if ann_vol != 0 else 0
-    
-    # Drawdown analysis
-    cum_returns = (1 + portfolio_returns_series).cumprod()
-    rolling_max = cum_returns.expanding().max()
-    drawdowns = (cum_returns - rolling_max) / rolling_max
-    max_drawdown = drawdowns.min()
-    
-    # Turnover analysis
-    weight_changes = weights_df.diff().abs()
-    monthly_turnover = weight_changes.sum(axis=1) / 2
-    avg_turnover = monthly_turnover.mean()
-    
-    stats = {
-        'Annualized Return (%)': ann_return * 100,
-        'Annualized Volatility (%)': ann_vol * 100,
-        'Sharpe Ratio': sharpe,
-        'Maximum Drawdown (%)': max_drawdown * 100,
-        'Average Monthly Turnover (%)': avg_turnover * 100,
-        'Positive Months (%)': (portfolio_returns_series > 0).mean() * 100,
-        'Skewness': portfolio_returns_series.skew(),
-        'Kurtosis': portfolio_returns_series.kurtosis()
-    }
-    
-    results = {
-        'statistics': stats,
-        'monthly_returns': portfolio_returns_series,
-        'monthly_turnover': monthly_turnover
-    }
-    
-    return results
+            next_idx = returns_df.index.get_loc(date) + 1
+            if next_idx < len(returns_df.index):
+                next_date = returns_df.index[next_idx]
+                w = weights_df.loc[date].to_numpy(dtype=float)
+                r = returns_df.loc[next_date].to_numpy(dtype=float)
+                portfolio_returns.append(float(np.nansum(w * np.nan_to_num(r))))
+                aligned_dates.append(next_date)
 
+    pr = pd.Series(portfolio_returns, index=aligned_dates)
+
+    ann_return = (1 + pr.mean()) ** 12 - 1
+    ann_vol = pr.std() * np.sqrt(12)
+    sharpe = ann_return / ann_vol if ann_vol != 0 else 0
+
+    cum = (1 + pr).cumprod()
+    drawdowns = (cum - cum.expanding().max()) / cum.expanding().max()
+
+    monthly_turnover = weights_df.diff().abs().sum(axis=1) / 2
+
+    stats = {
+        "Annualized Return (%)": ann_return * 100,
+        "Annualized Volatility (%)": ann_vol * 100,
+        "Sharpe Ratio": sharpe,
+        "Maximum Drawdown (%)": drawdowns.min() * 100,
+        "Average Monthly Turnover (%)": monthly_turnover.mean() * 100,
+        "Positive Months (%)": (pr > 0).mean() * 100,
+        "Skewness": pr.skew(),
+        "Kurtosis": pr.kurtosis(),
+    }
+    return {
+        "statistics": stats,
+        "monthly_returns": pr,
+        "monthly_turnover": monthly_turnover,
+    }
+
+
+# =============================================================================
+# VISUALIZATIONS (same output filenames as Step Five FAST.py)
+# =============================================================================
 def create_factor_weight_heatmap(weights_df, top_n=20):
     """Create an award-winning, sophisticated factor weight heatmap with executive dashboard styling"""
     logging.info("Creating award-winning factor weight heatmap...")
-    
+
     # Ensure all data is numeric by converting any non-numeric values to float
     weights_df = weights_df.apply(pd.to_numeric, errors='coerce').fillna(0)
 
     # Define factor categories and their prefixes/keywords
     categories = {
-        'Value': ['Best PE', 'Best PBK', 'Best Price Sales', 'Best Div Yield', 'Trailing PE', 'Positive PE', 
+        'Value': ['Best PE', 'Best PBK', 'Best Price Sales', 'Best Div Yield', 'Trailing PE', 'Positive PE',
                  'Shiller PE', 'Earnings Yield', 'Best Cash Flow', 'EV to EBITDA'],
         'Momentum': ['1MTR', '3MTR', '12-1MTR', 'RSI14', '120MA', 'Advance Decline', 'Signal', 'P2P'],
         'Economic': ['Inflation', 'REER', '10Yr Bond', 'GDP', 'Debt to GDP', 'Budget Def', 'Current Account'],
@@ -608,12 +348,12 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     # Sophisticated category styling
     category_colors = {
         'Value': '#2d5a3d',      # Deep forest green
-        'Momentum': '#1e3a5f',   # Deep navy blue  
+        'Momentum': '#1e3a5f',   # Deep navy blue
         'Economic': '#5d2e5a',   # Deep purple
         'Quality': '#5a3d2d',    # Deep brown
         'Commodity': '#5a4b2d'   # Deep golden brown
     }
-    
+
     category_backgrounds = {
         'Value': '#f8fdfb',      # Very light green tint
         'Momentum': '#f8fafd',   # Very light blue tint
@@ -625,7 +365,7 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     # Get top factors by average weight
     avg_weights = weights_df.mean().sort_values(ascending=False)
     top_factors = avg_weights.head(top_n).index.tolist()
-    
+
     # Ensure we're working with the subset of weights that are in top_factors
     filtered_weights_df = weights_df[top_factors]
 
@@ -633,7 +373,7 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     categorized_factors = []
     category_map = {}
     category_groups = {}
-    
+
     for category, keywords in categories.items():
         category_factors = []
         for factor in top_factors:
@@ -645,12 +385,12 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
         if category_factors:
             category_factors.sort()
             categorized_factors.extend(category_factors)
-            
+
     for factor in top_factors:
         if factor not in categorized_factors:
             categorized_factors.append(factor)
             category_map[factor] = "Other"
-            
+
     ordered_factors = categorized_factors[:top_n] if len(categorized_factors) > 0 else top_factors
 
     # Calculate category positions
@@ -659,7 +399,7 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
         cat_factors = [f for f in ordered_factors if category_map.get(f) == category]
         if cat_factors:
             category_groups[category] = {
-                'start': current_pos, 
+                'start': current_pos,
                 'end': current_pos + len(cat_factors) - 1,
                 'factors': cat_factors
             }
@@ -670,7 +410,7 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     if len(sample_weights) == 0:
         logging.warning("No weight data available for heatmap")
         return
-        
+
     # Ensure data is numeric and handle any remaining issues
     sample_weights = sample_weights.astype(float)
 
@@ -681,38 +421,37 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
         clean_name = clean_name.replace('1MTR', '1 Month Return')
         clean_factor_names.append(clean_name)
 
-    # Create sophisticated custom colormap: Light sage → Soft teal → Deep teal
+    # Create sophisticated custom colormap: Light sage -> Soft teal -> Deep teal
     colors = ['#f8fffe', '#e8f5f3', '#d1ebe6', '#a8dadc', '#79c2d0', '#5aa9c4', '#457b9d']
     sophisticated_cmap = mcolors.LinearSegmentedColormap.from_list("sophisticated", colors, N=256)
     sophisticated_cmap.set_under('white')
 
     # Create figure with optimal proportions
     fig, ax = plt.subplots(figsize=(20, 12))
-    
+
     # Set sophisticated styling
     plt.rcParams['font.family'] = ['Arial', 'Helvetica', 'DejaVu Sans']
-    
+
     # Create category background rectangles
     for category, group_info in category_groups.items():
         start_pos = group_info['start'] - 0.5
         height = group_info['end'] - group_info['start'] + 1
-        
+
         # Add subtle background tinting
         background_rect = Rectangle(
             (-0.5, start_pos), len(sample_weights.index), height,
-            facecolor=category_backgrounds[category], 
+            facecolor=category_backgrounds[category],
             edgecolor='none', alpha=0.3, zorder=0
         )
         ax.add_patch(background_rect)
 
     # Create the main heatmap
-    # Ensure we have valid min/max values
     max_value = sample_weights.values.max()
     if not np.isfinite(max_value) or max_value <= 0:
         max_value = 0.5
     else:
         max_value = min(max_value, 0.5)
-        
+
     im = ax.imshow(sample_weights.T.values, cmap=sophisticated_cmap, aspect='auto',
                    vmin=0.001, vmax=max_value)
 
@@ -721,13 +460,13 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     ax.set_xticks(tick_positions)
     date_labels = [sample_weights.index[i].strftime('%Y') for i in tick_positions]
     ax.set_xticklabels(date_labels, fontsize=12, fontweight='500', color='#333333')
-    
+
     ax.set_yticks(range(len(clean_factor_names)))
     ax.set_yticklabels(clean_factor_names, fontsize=11, fontweight='400', color='#333333')
 
     # Professional colorbar
     cbar = plt.colorbar(im, ax=ax, shrink=0.7, aspect=25, pad=0.02)
-    cbar.set_label('Portfolio Weight (%)', rotation=270, labelpad=25, 
+    cbar.set_label('Portfolio Weight (%)', rotation=270, labelpad=25,
                    fontsize=13, fontweight='600', color='#333333')
     cbar.ax.tick_params(labelsize=11, colors='#333333')
     cbar.ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:.0%}'))
@@ -742,7 +481,6 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     # Add thin horizontal lines between categories for clear boundaries
     for category, group_info in category_groups.items():
         end_pos = group_info['end']
-        # Draw thin line below each category (except the last one)
         if end_pos < len(ordered_factors) - 1:
             ax.axhline(y=end_pos + 0.5, color='#999999', linewidth=1.0, alpha=0.8, zorder=4)
 
@@ -752,19 +490,19 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
         start_pos = group_info['start']
         end_pos = group_info['end']
         center_pos = (start_pos + end_pos) / 2
-        
-        # Add elegant horizontal category header (no rotation)
+
         ax.text(middle_x, center_pos, category,
                 fontsize=16, fontweight='700', color=category_colors[category],
                 ha='center', va='center', rotation=0,
-                bbox=dict(boxstyle="round,pad=0.5", 
-                         facecolor='white', 
+                bbox=dict(boxstyle="round,pad=0.5",
+                         facecolor='white',
                          edgecolor=category_colors[category],
                          linewidth=2.0, alpha=0.95),
                 zorder=5)
 
     # Professional title with elegant typography
-    ax.set_title('Portfolio Weight Allocation Over Time\nTop 20 Factors by Average Weight', 
+    title_detail = f" (Hysteresis Band {EXIT_BAND}, Cost Hurdle {KAPPA})" if KAPPA > 0 else ""
+    ax.set_title(f'Portfolio Weight Allocation Over Time\nTop 20 Factors by Average Weight{title_detail}',
                  fontsize=22, fontweight='700', color='#1a1a1a', pad=30,
                  fontfamily='serif')
 
@@ -789,154 +527,140 @@ def create_factor_weight_heatmap(weights_df, top_n=20):
     plt.tight_layout()
 
     # Save with high quality
-    plt.savefig('T2_factor_weight_heatmap.pdf',
-                bbox_inches='tight', dpi=300, facecolor='white', 
+    plt.savefig(HEATMAP_OUTPUT,
+                bbox_inches='tight', dpi=300, facecolor='white',
                 edgecolor='none', format='pdf')
     plt.close()
-    
-    logging.info("✓ Award-winning factor weight heatmap created with sophisticated design")
+
+    logging.info("Award-winning factor weight heatmap created with sophisticated design")
+
 
 def create_strategy_performance_plot(performance_results):
     """
     Create strategy performance visualization showing cumulative returns.
-    
+
     Args:
         performance_results: Dict containing monthly returns and statistics
     """
     logging.info("Creating strategy performance plot...")
-    
+
     # Get monthly returns
     monthly_returns = performance_results['monthly_returns']
-    
+
     # Calculate cumulative returns
     cum_returns = (1 + monthly_returns).cumprod()
-    
+
     # Create figure
     plt.figure(figsize=(15, 8))
-    plt.plot(cum_returns.index, cum_returns.values, label='Hybrid Strategy', linewidth=2, color='#457b9d')
-    
+    strategy_label = f"Top-{N_TOP} Hysteresis + Tcost Hurdle Strategy" if KAPPA > 0 else f"Top-{N_TOP} Hysteresis Strategy"
+    plt.plot(cum_returns.index, cum_returns.values, label=strategy_label,
+             linewidth=2, color='#457b9d')
+
     # Add baseline
     plt.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='Baseline')
-    
+
     plt.title('T2 Strategy Cumulative Performance', fontsize=16, fontweight='bold', pad=20)
     plt.xlabel('Date', fontsize=12)
     plt.ylabel('Cumulative Return', fontsize=12)
-    
+
     # Format y-axis as percentages
     plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:.1%}'.format(y-1)))
-    
+
     # Enhance grid and legend
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=12, loc='upper left')
-    
+
     # Add performance annotations
     stats = performance_results['statistics']
     ann_return = stats['Annualized Return (%)']
     sharpe_ratio = stats['Sharpe Ratio']
     max_dd = stats['Maximum Drawdown (%)']
-    
-    plt.figtext(0.02, 0.02, 
-                f'Annual Return: {ann_return:.1f}%\nSharpe Ratio: {sharpe_ratio:.2f}\nMax Drawdown: {max_dd:.1f}%', 
-                fontsize=11, 
-                bbox=dict(facecolor='white', alpha=0.9, edgecolor='gray', pad=10))
-    
-    plt.tight_layout()
-    plt.savefig('T2_strategy_performance.pdf', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    logging.info("Strategy performance plot saved to T2_strategy_performance.pdf")
+    turn = stats['Average Monthly Turnover (%)']
 
+    plt.figtext(0.02, 0.02,
+                f'Annual Return: {ann_return:.1f}%\nSharpe Ratio: {sharpe_ratio:.2f}\n'
+                f'Max Drawdown: {max_dd:.1f}%\nAvg Turnover: {turn:.1f}%/mo',
+                fontsize=11,
+                bbox=dict(facecolor='white', alpha=0.9, edgecolor='gray', pad=10))
+
+    plt.tight_layout()
+    plt.savefig(PERFORMANCE_OUTPUT, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    logging.info("Strategy performance plot saved to " + PERFORMANCE_OUTPUT)
+
+
+# =============================================================================
+# SAVE RESULTS (same files/sheets as Step Five FAST.py)
+# =============================================================================
 def save_results(weights_df, performance_results):
-    """
-    Save results to Excel files and create visualizations.
-    
-    Args:
-        weights_df: DataFrame of optimal weights
-        performance_results: Dict of performance metrics
-    """
-    logging.info("Saving results to Excel files...")
-    
-    # Save weights
-    weights_output_file = 'T2_rolling_window_weights.xlsx'
-    weights_df.to_excel(weights_output_file)
-    logging.info(f"Weights saved to {weights_output_file}")
-    
-    # Save strategy statistics
-    stats_output_file = 'T2_strategy_statistics.xlsx'
-    
-    with pd.ExcelWriter(stats_output_file, engine='xlsxwriter') as writer:
-        # Summary statistics
-        stats_df = pd.DataFrame(list(performance_results['statistics'].items()),
-                               columns=['Metric', 'Value'])
-        stats_df.to_excel(writer, sheet_name='Summary Statistics', index=False)
-        
-        # Monthly returns
-        returns_df = pd.DataFrame({
-            'Hybrid Strategy Returns': performance_results['monthly_returns']
-        })
-        returns_df.to_excel(writer, sheet_name='Monthly Returns')
-        
-        # Monthly turnover
-        turnover_df = pd.DataFrame({
-            'Monthly Turnover': performance_results['monthly_turnover']
-        })
-        turnover_df.to_excel(writer, sheet_name='Monthly Turnover')
-        
-        # Apply proper date formatting to sheets with date indices
+    logging.info("Saving results...")
+
+    weights_df.to_excel(WEIGHTS_OUTPUT)
+    logging.info("Weights saved to %s", WEIGHTS_OUTPUT)
+
+    with pd.ExcelWriter(STATS_OUTPUT, engine="xlsxwriter") as writer:
+        stats_df = pd.DataFrame(list(performance_results["statistics"].items()),
+                                columns=["Metric", "Value"])
+        stats_df.to_excel(writer, sheet_name="Summary Statistics", index=False)
+
+        pd.DataFrame({
+            "Hybrid Strategy Returns": performance_results["monthly_returns"]
+        }).to_excel(writer, sheet_name="Monthly Returns")
+
+        pd.DataFrame({
+            "Monthly Turnover": performance_results["monthly_turnover"]
+        }).to_excel(writer, sheet_name="Monthly Turnover")
+
         workbook = writer.book
-        date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
-        
-        # Format date columns in sheets with date indices
-        for sheet_name in ['Monthly Returns', 'Monthly Turnover']:
+        date_format = workbook.add_format({"num_format": "dd-mmm-yyyy"})
+        for sheet_name in ["Monthly Returns", "Monthly Turnover"]:
             if sheet_name in writer.sheets:
-                worksheet = writer.sheets[sheet_name]
-                worksheet.set_column(0, 0, 12, date_format)  # Format index column (dates)
-    
-    logging.info(f"Strategy statistics saved to {stats_output_file}")
-    
-    # Create visualizations
+                writer.sheets[sheet_name].set_column(0, 0, 12, date_format)
+
+    logging.info("Strategy statistics saved to %s", STATS_OUTPUT)
+
     create_factor_weight_heatmap(weights_df)
     create_strategy_performance_plot(performance_results)
 
+
 def main():
-    """Main execution function"""
     setup_logging()
-    
-    logging.info("="*80)
-    logging.info("T2 FACTOR TIMING - STEP FIVE FAST: HIGH-PERFORMANCE OPTIMIZATION")
-    logging.info("="*80)
-    logging.info("Optimization Engine: CVXPY with OSQP solver")
-    logging.info("Features: Warm-start, batch processing, vectorized operations")
-    logging.info("="*80)
-    
+    start = time.time()
+
+    logging.info("=" * 80)
+    logging.info("T2 FACTOR TIMING - STEP FIVE TOP3 TCOST: %d-FACTOR MOMENTUM, "
+                 "HYSTERESIS BAND %d, WINDOW %dM, COST HURDLE KAPPA %.1f",
+                 N_TOP, EXIT_BAND, WINDOW_SIZE, KAPPA)
+    logging.info("=" * 80)
+
     try:
-        # Run optimization
-        weights_df, returns_df = run_fast_optimization()
-        
-        # Calculate performance
+        returns_df, eligible = load_and_prepare_data()
+        costs_df = load_trading_costs(returns_df, eligible)
+        weights_df = select_top3_weights(returns_df, eligible, costs_df)
         performance_results = calculate_strategy_performance(weights_df, returns_df)
-        
-        # Save results
         save_results(weights_df, performance_results)
-        
-        # Display summary (full period + rolling 12m / 3y / 5y windows)
-        logging.info("="*80)
-        logging.info("OPTIMIZATION RESULTS SUMMARY (multi-window)")
-        logging.info("="*80)
+
+        logging.info("=" * 80)
+        logging.info("RESULTS SUMMARY (multi-window)")
+        logging.info("=" * 80)
         log_step_five_multiwindow_table(
             performance_results["monthly_returns"],
             performance_results["monthly_turnover"],
             logging.info,
         )
-        logging.info("="*80)
-        logging.info("STEP FIVE FAST COMPLETED SUCCESSFULLY")
-        logging.info("="*80)
-        
+        logging.info("=" * 80)
+        logging.info("STEP FIVE TOP3 TCOST COMPLETED in %.1fs", time.time() - start)
+        logging.info("=" * 80)
+
     except Exception as e:
-        logging.error(f"Error in Step Five FAST: {str(e)}")
+        logging.error("Error in Step Five Top3 Tcost: %s", e)
         import traceback
         traceback.print_exc()
         raise
+
+    return performance_results
+
 
 if __name__ == "__main__":
     main()

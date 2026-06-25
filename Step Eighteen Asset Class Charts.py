@@ -1,36 +1,23 @@
 """
-Step Eighteen Asset Class Charts.py
+Step Eighteen Asset Class Charts
 
-INPUT FILES:
-- T2_Optimized_Country_Weights.xlsx
-  Sheet: Optimized_Weights
-  Description: Country weights for the optimized portfolio. Columns: Date, Country1, Country2, ...
-- T2_Final_Country_Weights.xlsx
-  Sheet: All Periods
-  Description: Country weights for the final portfolio. Columns: Date, Country1, Country2, ...
-- Step Factor Categories.xlsx
-  Sheet: Asset Class
-  Description: Mapping of countries to asset classes. Columns: Country, Asset Class
+INPUT FILES (local):
+- T2_Final_Country_Weights.xlsx (Sheet All Periods): country weights from Step Eight/Nine
+- Step Factor Categories.xlsx (Sheet Asset Class): Country → Asset Class mapping
 
 OUTPUT FILES:
-- T2_Asset_Class.xlsx
-  Description: Asset class weights by period for both portfolios. One sheet per portfolio (Optimized, Final), periods as rows, asset classes as columns.
-- T2_Asset_Class_Weights.pdf
-  Description: PDF plot of asset class weights through time for both portfolios on the same chart.
-- T2_Asset_Class_Split.pdf
-  Description: Multi-page PDF, one chart per asset class, both portfolios.
-- T2_Asset_Class_MissingDataLog.txt
-  Description: Log of missing data replacements and data completeness by country.
-- T2_Country_Weights.xlsx
-  Description: Country weights by period for both portfolios. One sheet per portfolio (Optimized, Final), periods as rows, countries as columns.
-- T2_Country_Weights_Split.pdf
-  Description: Multi-page PDF, one chart per country, both portfolios.
+- T2_Asset_Class.xlsx: asset class weights by period (Final)
+- T2_Asset_Class_Weights.pdf: portfolio weights over time
+- T2_Asset_Class_Split.pdf: one chart per asset class
+- T2_Asset_Class_MissingDataLog.txt: mapping issues and completeness
+- T2_Country_Weights.xlsx: country weights by period (Final)
+- T2_Country_Weights_Split.pdf: per-country charts
 
-VERSION HISTORY:
-- v1.1, 2025-07-18: Added country-level Excel and PDF outputs, changed all paths to local.
-- v1.0, 2025-07-17: Initial version
+NOTE: Step Fourteen (Target Optimization) is moot; this script now uses only the
+Step Eight/Nine output (T2_Final_Country_Weights.xlsx) and no longer compares
+against an Optimized portfolio.
 """
-# Step Eighteen: Aggregate country weights into asset class weights for each period and portfolio
+# Step Eighteen: Aggregate country weights into asset class weights for each period
 # Documented for clarity and reproducibility
 
 import pandas as pd
@@ -45,7 +32,6 @@ print("[DEBUG] Working directory:", os.getcwd())
 # ========== SECTION 1: Load Data ==========
 
 # File paths (all local)
-OPTIMIZED_PATH = "T2_Optimized_Country_Weights.xlsx"
 FINAL_PATH = "T2_Final_Country_Weights.xlsx"
 MAPPING_PATH = "Step Factor Categories.xlsx"
 OUT_XLSX = "T2_Asset_Class.xlsx"
@@ -63,7 +49,6 @@ def read_weights(filepath, sheet):
     df["Date"] = pd.to_datetime(df["Date"])
     return df
 
-optimized_df = read_weights(OPTIMIZED_PATH, "Optimized_Weights")
 final_df = read_weights(FINAL_PATH, "All Periods")
 
 # Read country to asset class mapping
@@ -104,11 +89,8 @@ def aggregate_to_asset(df, country_to_asset, portfolio_name):
     result_df = pd.DataFrame(out, columns=["Date"] + asset_classes)
     return result_df, completeness
 
-optimized_asset_df, optimized_completeness = aggregate_to_asset(optimized_df, country_to_asset, "Optimized")
 final_asset_df, final_completeness = aggregate_to_asset(final_df, country_to_asset, "Final")
 
-print("[DEBUG] Optimized asset DataFrame shape:", optimized_asset_df.shape)
-print(optimized_asset_df.head())
 print("[DEBUG] Final asset DataFrame shape:", final_asset_df.shape)
 print(final_asset_df.head())
 
@@ -117,15 +99,13 @@ print(final_asset_df.head())
 try:
     with pd.ExcelWriter(OUT_XLSX, engine="xlsxwriter") as writer:
         print(f"[DEBUG] Writing Excel file: {OUT_XLSX}")
-        optimized_asset_df.to_excel(writer, sheet_name="Optimized", index=False)
         final_asset_df.to_excel(writer, sheet_name="Final", index=False)
         workbook = writer.book
-        for sheet, df in zip(["Optimized", "Final"], [optimized_asset_df, final_asset_df]):
-            worksheet = writer.sheets[sheet]
-            date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
-            worksheet.set_column(0, 0, 15, date_format)
-            for i in range(1, len(df.columns)):
-                worksheet.set_column(i, i, 15)
+        worksheet = writer.sheets["Final"]
+        date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
+        worksheet.set_column(0, 0, 15, date_format)
+        for i in range(1, len(final_asset_df.columns)):
+            worksheet.set_column(i, i, 15)
     print(f"[DEBUG] Excel file written: {OUT_XLSX}")
 except Exception as e:
     print(f"[ERROR] Writing Excel file failed: {e}")
@@ -134,21 +114,16 @@ except Exception as e:
 try:
     with pd.ExcelWriter(OUT_COUNTRY_XLSX, engine="xlsxwriter") as writer:
         print(f"[DEBUG] Writing Country Excel file: {OUT_COUNTRY_XLSX}")
-        # Optimized country weights: columns = countries, rows = periods
-        optimized_countries_df = optimized_df.copy()
-        optimized_countries_df = optimized_countries_df.rename(columns={optimized_countries_df.columns[0]: "Date"})
-        optimized_countries_df.to_excel(writer, sheet_name="Optimized", index=False)
         # Final country weights
         final_countries_df = final_df.copy()
         final_countries_df = final_countries_df.rename(columns={final_countries_df.columns[0]: "Date"})
         final_countries_df.to_excel(writer, sheet_name="Final", index=False)
         workbook = writer.book
-        for sheet, df in zip(["Optimized", "Final"], [optimized_countries_df, final_countries_df]):
-            worksheet = writer.sheets[sheet]
-            date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
-            worksheet.set_column(0, 0, 15, date_format)
-            for i in range(1, len(df.columns)):
-                worksheet.set_column(i, i, 15)
+        worksheet = writer.sheets["Final"]
+        date_format = workbook.add_format({'num_format': 'dd-mmm-yyyy'})
+        worksheet.set_column(0, 0, 15, date_format)
+        for i in range(1, len(final_countries_df.columns)):
+            worksheet.set_column(i, i, 15)
     print(f"[DEBUG] Country Excel file written: {OUT_COUNTRY_XLSX}")
 except Exception as e:
     print(f"[ERROR] Writing Country Excel file failed: {e}")
@@ -156,14 +131,13 @@ except Exception as e:
 # ========== SECTION 4: Plot Asset Class Weights ==========
 
 try:
-    # Original summary chart (unchanged)
+    # Original summary chart (Final only)
     plt.figure(figsize=(12, 7))
-    for df, label, color in zip([optimized_asset_df, final_asset_df], ["Optimized", "Final"], ['tab:blue', 'tab:orange']):
-        for asset in df.columns[1:]:
-            plt.plot(df['Date'], df[asset], label=f"{label} - {asset}")
+    for asset in final_asset_df.columns[1:]:
+        plt.plot(final_asset_df['Date'], final_asset_df[asset], label=f"Final - {asset}")
     plt.xlabel("Date", fontsize=10)
     plt.ylabel("Asset Class Weight", fontsize=10)
-    plt.title("Asset Class Weights Through Time (Optimized vs Final)", fontsize=12)
+    plt.title("Asset Class Weights Through Time (Final)", fontsize=12)
     plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, ncol=2)
     plt.xticks(fontsize=8)
     plt.yticks(fontsize=8)
@@ -174,11 +148,10 @@ try:
 
     # New: Separate chart per asset class in a multipage PDF
     from matplotlib.backends.backend_pdf import PdfPages
-    asset_classes = optimized_asset_df.columns[1:]
+    asset_classes = final_asset_df.columns[1:]
     with PdfPages(OUT_SPLIT_PDF) as pdf:
         for asset in asset_classes:
             plt.figure(figsize=(10, 5))
-            plt.plot(optimized_asset_df['Date'], optimized_asset_df[asset], label='Optimized', color='tab:blue')
             plt.plot(final_asset_df['Date'], final_asset_df[asset], label='Final', color='tab:orange')
             plt.xlabel("Date", fontsize=8)
             plt.ylabel("Weight", fontsize=8)
@@ -192,11 +165,10 @@ try:
     print(f"[DEBUG] Split PDF (one chart per asset class) written: {OUT_SPLIT_PDF}")
 
     # ========== SECTION 4B: Plot Country Weights ==========
-    countries = optimized_df.columns[1:]
+    countries = final_df.columns[1:]
     with PdfPages(OUT_COUNTRY_SPLIT_PDF) as pdf:
         for country in countries:
             plt.figure(figsize=(10, 5))
-            plt.plot(optimized_df['Date'], optimized_df[country], label='Optimized', color='tab:blue')
             plt.plot(final_df['Date'], final_df[country], label='Final', color='tab:orange')
             plt.xlabel("Date", fontsize=8)
             plt.ylabel("Weight", fontsize=8)
@@ -220,10 +192,9 @@ try:
         for line in missing_log:
             f.write(line + "\n")
         f.write("\nData completeness (nonzero count by country):\n")
-        for name, completeness in [("Optimized", optimized_completeness), ("Final", final_completeness)]:
-            f.write(f"\n{name} Portfolio:\n")
-            for country, count in completeness.items():
-                f.write(f"{country}: {count}\n")
+        f.write(f"\nFinal Portfolio:\n")
+        for country, count in final_completeness.items():
+            f.write(f"{country}: {count}\n")
     print(f"[DEBUG] Log file written: {OUT_LOG}")
 except Exception as e:
     print(f"[ERROR] Writing log file failed: {e}")

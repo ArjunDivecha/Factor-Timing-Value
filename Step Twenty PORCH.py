@@ -1,27 +1,21 @@
 """
-Step Twenty PORCH.py - Portfolio Factor Exposure Analysis
+Step Twenty PORCH — Portfolio Factor Exposure Analysis
 
-INPUT FILES:
-- T2_Final_Country_Weights.xlsx (Latest Weights sheet): Final optimized country weights
-- T2_Optimized_Country_Weights.xlsx (Latest_Weights sheet): Optimized country weights
-- Normalized_T2_MasterCSV.csv: Normalized factor data for all countries and factors
+INPUT FILES (local):
+- T2_Final_Country_Weights.xlsx (Latest Weights): Final country weights from Step Eight/Nine
+- Normalized_T2_MasterCSV.csv: Normalized factor data (latest date)
 
 OUTPUT FILES:
-- T2_Portfolio_Factor_Exposures.pdf: Factor exposure comparison table across three portfolios
+- T2_Portfolio_Factor_Exposures.pdf: Factor exposure comparison table (Final, Equal Weight)
+- T2_Portfolio_Factor_Exposures.xlsx: Detailed factor exposure results
 
 DESCRIPTION:
-This script calculates and compares factor exposures for three portfolios:
-1. Final Country Weights Portfolio
-2. Optimized Country Weights Portfolio  
-3. Equal Weighted Benchmark Portfolio
+Calculates portfolio-level factor exposures as Σ w_country × exposure_country,factor using
+country weights from Step Eight/Nine. Also computes relative tilts vs an equal-weight benchmark.
 
-The analysis shows how each portfolio's country allocation translates into 
-factor exposures, providing insights into the risk characteristics and 
-factor tilts of each strategy.
-
-VERSION: 1.0
-DATE: 2025-01-27
-AUTHOR: T2 Factor Timing System
+NOTE: Step Fourteen (Target Optimization) is moot; this script now uses only the
+Step Eight/Nine output (T2_Final_Country_Weights.xlsx) and no longer compares
+against an Optimized portfolio.
 """
 
 import pandas as pd
@@ -38,34 +32,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def load_portfolio_weights():
     """
-    Load country weights from both portfolio files.
-    
+    Load country weights from the Step Eight/Nine output.
+
     Returns:
-        tuple: (final_weights, optimized_weights) - DataFrames with country weights
+        DataFrame: Final country weights with Country and Weight columns
     """
     logging.info("Loading portfolio weights...")
-    
+
     # Load Final Country Weights (Latest Weights sheet)
     final_file = "T2_Final_Country_Weights.xlsx"
     final_weights = pd.read_excel(final_file, sheet_name="Latest Weights")
-    
+
     # Clean up the final weights data
     final_weights = final_weights.iloc[1:].copy()  # Skip header row
     final_weights.columns = ['Country', 'Weight', 'Average_Weight', 'Days_with_Weight', 'Latest_Date']
     final_weights = final_weights[['Country', 'Weight']].copy()
     final_weights['Weight'] = pd.to_numeric(final_weights['Weight'], errors='coerce')
     final_weights = final_weights.dropna()
-    
-    # Load Optimized Country Weights (Latest_Weights sheet)
-    optimized_file = "T2_Optimized_Country_Weights.xlsx"
-    optimized_weights = pd.read_excel(optimized_file, sheet_name="Latest_Weights")
-    optimized_weights['Weight'] = pd.to_numeric(optimized_weights['Weight'], errors='coerce')
-    optimized_weights = optimized_weights.dropna()
-    
+
     logging.info(f"Final weights: {len(final_weights)} countries")
-    logging.info(f"Optimized weights: {len(optimized_weights)} countries")
-    
-    return final_weights, optimized_weights
+
+    return final_weights
 
 def load_factor_exposures():
     """
@@ -150,13 +137,12 @@ def calculate_portfolio_factor_exposures(portfolio_weights, factor_exposures):
     
     return pd.Series(portfolio_exposures)
 
-def create_factor_exposure_comparison(final_exposures, optimized_exposures, benchmark_exposures):
+def create_factor_exposure_comparison(final_exposures, benchmark_exposures):
     """
     Create comparison DataFrame of factor exposures across portfolios.
     
     Args:
         final_exposures: Series of factor exposures for final portfolio
-        optimized_exposures: Series of factor exposures for optimized portfolio
         benchmark_exposures: Series of factor exposures for benchmark portfolio
         
     Returns:
@@ -165,14 +151,11 @@ def create_factor_exposure_comparison(final_exposures, optimized_exposures, benc
     comparison_df = pd.DataFrame({
         'Factor': final_exposures.index,
         'Final_Portfolio': final_exposures.values,
-        'Optimized_Portfolio': optimized_exposures.values,
         'Equal_Weighted_Benchmark': benchmark_exposures.values
     })
     
     # Calculate relative exposures vs benchmark
     comparison_df['Final_vs_Benchmark'] = comparison_df['Final_Portfolio'] - comparison_df['Equal_Weighted_Benchmark']
-    comparison_df['Optimized_vs_Benchmark'] = comparison_df['Optimized_Portfolio'] - comparison_df['Equal_Weighted_Benchmark']
-    comparison_df['Final_vs_Optimized'] = comparison_df['Final_Portfolio'] - comparison_df['Optimized_Portfolio']
     
     # Sort by absolute exposure difference from benchmark
     comparison_df['Abs_Final_vs_Benchmark'] = comparison_df['Final_vs_Benchmark'].abs()
@@ -211,19 +194,17 @@ def create_factor_exposure_tables(comparison_df, output_file):
                 table_data.append([
                     row['Factor'],
                     f"{row['Final_Portfolio']:.4f}",
-                    f"{row['Optimized_Portfolio']:.4f}",
                     f"{row['Equal_Weighted_Benchmark']:.4f}",
-                    f"{row['Final_vs_Benchmark']:+.4f}",
-                    f"{row['Optimized_vs_Benchmark']:+.4f}"
+                    f"{row['Final_vs_Benchmark']:+.4f}"
                 ])
         
             # Create table
             table = ax.table(
                 cellText=table_data,
-                colLabels=['Factor', 'Final Portfolio', 'Optimized Portfolio', 'Equal Weighted', 'Final vs Benchmark', 'Optimized vs Benchmark'],
+                colLabels=['Factor', 'Final Portfolio', 'Equal Weighted', 'Final vs Benchmark'],
                 cellLoc='center',
                 loc='center',
-                colWidths=[0.25, 0.15, 0.15, 0.15, 0.15, 0.15]
+                colWidths=[0.30, 0.20, 0.20, 0.20]
             )
             
             table.auto_set_font_size(False)
@@ -231,25 +212,18 @@ def create_factor_exposure_tables(comparison_df, output_file):
             table.scale(1.2, 1.3)
             
             # Style the table
-            for i in range(6):
+            for i in range(4):
                 table[(0, i)].set_facecolor('#4CAF50')
                 table[(0, i)].set_text_props(weight='bold', color='white')
             
-            # Color code the difference columns
+            # Color code the difference column
             for i in range(1, len(table_data) + 1):
-                # Final vs Benchmark column (index 4)
-                final_diff = float(table_data[i-1][4])
+                # Final vs Benchmark column (index 3)
+                final_diff = float(table_data[i-1][3])
                 if final_diff > 0.1:
-                    table[(i, 4)].set_facecolor('#E8F5E8')  # Light green
+                    table[(i, 3)].set_facecolor('#E8F5E8')  # Light green
                 elif final_diff < -0.1:
-                    table[(i, 4)].set_facecolor('#FFE8E8')  # Light red
-                
-                # Optimized vs Benchmark column (index 5)
-                opt_diff = float(table_data[i-1][5])
-                if opt_diff > 0.1:
-                    table[(i, 5)].set_facecolor('#E8F5E8')  # Light green
-                elif opt_diff < -0.1:
-                    table[(i, 5)].set_facecolor('#FFE8E8')  # Light red
+                    table[(i, 3)].set_facecolor('#FFE8E8')  # Light red
             
             ax.set_title(f'Portfolio Factor Exposures - All Factors (Page {page_num + 1} of {num_pages})\n(Sorted by |Final vs Benchmark| Difference)', 
                         fontsize=16, fontweight='bold', pad=20)
@@ -311,110 +285,6 @@ def create_factor_exposure_tables(comparison_df, output_file):
         pdf.savefig(fig, bbox_inches='tight')
         plt.close()
         
-        # Additional Page: Top 50 Optimized vs Benchmark Differences
-        fig, ax = plt.subplots(figsize=(11, 14))
-        ax.axis('tight')
-        ax.axis('off')
-        
-        comparison_df['Abs_Optimized_vs_Benchmark'] = comparison_df['Optimized_vs_Benchmark'].abs()
-        top_opt_diff = comparison_df.nlargest(50, 'Abs_Optimized_vs_Benchmark')
-        
-        table_data = []
-        for _, row in top_opt_diff.iterrows():
-            table_data.append([
-                row['Factor'],
-                f"{row['Optimized_Portfolio']:.4f}",
-                f"{row['Equal_Weighted_Benchmark']:.4f}",
-                f"{row['Optimized_vs_Benchmark']:+.4f}",
-                f"{abs(row['Optimized_vs_Benchmark']):.4f}"
-            ])
-        
-        table = ax.table(
-            cellText=table_data,
-            colLabels=['Factor', 'Optimized Portfolio', 'Equal Weighted', 'Difference', 'Abs Difference'],
-            cellLoc='center',
-            loc='center',
-            colWidths=[0.35, 0.18, 0.18, 0.15, 0.14]
-        )
-        
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1.2, 1.5)
-        
-        # Style the table
-        for i in range(5):
-            table[(0, i)].set_facecolor('#4CAF50')
-            table[(0, i)].set_text_props(weight='bold', color='white')
-        
-        # Color code differences
-        for i in range(1, len(table_data) + 1):
-            diff = float(table_data[i-1][3])
-            if diff > 0.2:
-                table[(i, 3)].set_facecolor('#C8E6C9')  # Strong green
-            elif diff > 0.1:
-                table[(i, 3)].set_facecolor('#E8F5E8')  # Light green
-            elif diff < -0.2:
-                table[(i, 3)].set_facecolor('#FFCDD2')  # Strong red
-            elif diff < -0.1:
-                table[(i, 3)].set_facecolor('#FFE8E8')  # Light red
-        
-        ax.set_title('Optimized Portfolio vs Equal Weighted Benchmark\nTop 50 Factor Exposure Differences', 
-                    fontsize=16, fontweight='bold', pad=20)
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Additional Page: Top 50 Final vs Optimized Comparison
-        fig, ax = plt.subplots(figsize=(11, 14))
-        ax.axis('tight')
-        ax.axis('off')
-        
-        comparison_df['Abs_Final_vs_Optimized'] = comparison_df['Final_vs_Optimized'].abs()
-        top_portfolio_diff = comparison_df.nlargest(50, 'Abs_Final_vs_Optimized')
-        
-        table_data = []
-        for _, row in top_portfolio_diff.iterrows():
-            table_data.append([
-                row['Factor'],
-                f"{row['Final_Portfolio']:.4f}",
-                f"{row['Optimized_Portfolio']:.4f}",
-                f"{row['Final_vs_Optimized']:+.4f}",
-                f"{abs(row['Final_vs_Optimized']):.4f}"
-            ])
-        
-        table = ax.table(
-            cellText=table_data,
-            colLabels=['Factor', 'Final Portfolio', 'Optimized Portfolio', 'Difference', 'Abs Difference'],
-            cellLoc='center',
-            loc='center',
-            colWidths=[0.35, 0.18, 0.18, 0.15, 0.14]
-        )
-        
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1.2, 1.5)
-        
-        # Style the table
-        for i in range(5):
-            table[(0, i)].set_facecolor('#9C27B0')
-            table[(0, i)].set_text_props(weight='bold', color='white')
-        
-        # Color code differences
-        for i in range(1, len(table_data) + 1):
-            diff = float(table_data[i-1][3])
-            if diff > 0.1:
-                table[(i, 3)].set_facecolor('#E1BEE7')  # Light purple
-            elif diff < -0.1:
-                table[(i, 3)].set_facecolor('#FFCDD2')  # Light red
-        
-        ax.set_title('Final Portfolio vs Optimized Portfolio\nTop 50 Factor Exposure Differences', 
-                    fontsize=16, fontweight='bold', pad=20)
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
         # Final Page: Summary Statistics Table
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.axis('tight')
@@ -425,34 +295,20 @@ def create_factor_exposure_tables(comparison_df, output_file):
             'Metric': [
                 'Total Factors Analyzed',
                 'Average Absolute Exposure - Final',
-                'Average Absolute Exposure - Optimized', 
                 'Average Absolute Exposure - Benchmark',
                 'Max Positive Exposure - Final',
                 'Max Negative Exposure - Final',
-                'Max Positive Exposure - Optimized',
-                'Max Negative Exposure - Optimized',
                 'Factors with |Final - Benchmark| > 0.1',
-                'Factors with |Optimized - Benchmark| > 0.1',
-                'Factors with |Final - Optimized| > 0.1',
-                'Correlation: Final vs Optimized',
-                'Correlation: Final vs Benchmark',
-                'Correlation: Optimized vs Benchmark'
+                'Correlation: Final vs Benchmark'
             ],
             'Value': [
                 len(comparison_df),
                 f"{comparison_df['Final_Portfolio'].abs().mean():.4f}",
-                f"{comparison_df['Optimized_Portfolio'].abs().mean():.4f}",
                 f"{comparison_df['Equal_Weighted_Benchmark'].abs().mean():.4f}",
                 f"{comparison_df['Final_Portfolio'].max():.4f}",
                 f"{comparison_df['Final_Portfolio'].min():.4f}",
-                f"{comparison_df['Optimized_Portfolio'].max():.4f}",
-                f"{comparison_df['Optimized_Portfolio'].min():.4f}",
                 len(comparison_df[comparison_df['Abs_Final_vs_Benchmark'] > 0.1]),
-                len(comparison_df[comparison_df['Abs_Optimized_vs_Benchmark'] > 0.1]),
-                len(comparison_df[comparison_df['Abs_Final_vs_Optimized'] > 0.1]),
-                f"{comparison_df['Final_Portfolio'].corr(comparison_df['Optimized_Portfolio']):.4f}",
-                f"{comparison_df['Final_Portfolio'].corr(comparison_df['Equal_Weighted_Benchmark']):.4f}",
-                f"{comparison_df['Optimized_Portfolio'].corr(comparison_df['Equal_Weighted_Benchmark']):.4f}"
+                f"{comparison_df['Final_Portfolio'].corr(comparison_df['Equal_Weighted_Benchmark']):.4f}"
             ]
         }
         
@@ -497,16 +353,6 @@ def save_detailed_results(comparison_df, output_excel):
             ['Factor', 'Final_Portfolio', 'Equal_Weighted_Benchmark', 'Final_vs_Benchmark']
         ]
         top_final_vs_benchmark.to_excel(writer, sheet_name='Top_Final_vs_Benchmark', index=False)
-        
-        top_optimized_vs_benchmark = comparison_df.nlargest(20, 'Optimized_vs_Benchmark')[
-            ['Factor', 'Optimized_Portfolio', 'Equal_Weighted_Benchmark', 'Optimized_vs_Benchmark']
-        ]
-        top_optimized_vs_benchmark.to_excel(writer, sheet_name='Top_Optimized_vs_Benchmark', index=False)
-        
-        top_final_vs_optimized = comparison_df.nlargest(20, 'Abs_Final_vs_Optimized')[
-            ['Factor', 'Final_Portfolio', 'Optimized_Portfolio', 'Final_vs_Optimized']
-        ]
-        top_final_vs_optimized.to_excel(writer, sheet_name='Top_Final_vs_Optimized', index=False)
     
     logging.info(f"Detailed results saved to {output_excel}")
 
@@ -518,7 +364,7 @@ def main():
     
     try:
         # Load data
-        final_weights, optimized_weights = load_portfolio_weights()
+        final_weights = load_portfolio_weights()
         factor_exposures = load_factor_exposures()
         
         # Get all unique countries from exposure data
@@ -531,11 +377,10 @@ def main():
         logging.info("Calculating factor exposures...")
         
         final_exposures = calculate_portfolio_factor_exposures(final_weights, factor_exposures)
-        optimized_exposures = calculate_portfolio_factor_exposures(optimized_weights, factor_exposures)
         benchmark_exposures = calculate_portfolio_factor_exposures(benchmark_weights, factor_exposures)
         
         # Create comparison DataFrame
-        comparison_df = create_factor_exposure_comparison(final_exposures, optimized_exposures, benchmark_exposures)
+        comparison_df = create_factor_exposure_comparison(final_exposures, benchmark_exposures)
         
         # Generate outputs
         output_pdf = "T2_Portfolio_Factor_Exposures.pdf"
@@ -548,9 +393,8 @@ def main():
         logging.info("\n" + "="*60)
         logging.info("PORTFOLIO FACTOR EXPOSURE ANALYSIS COMPLETE")
         logging.info("="*60)
-        logging.info(f"Analyzed {len(comparison_df)} factors across 3 portfolios")
+        logging.info(f"Analyzed {len(comparison_df)} factors across 2 portfolios")
         logging.info(f"Final Portfolio Countries: {len(final_weights)}")
-        logging.info(f"Optimized Portfolio Countries: {len(optimized_weights)}")
         logging.info(f"Benchmark Portfolio Countries: {len(benchmark_weights)}")
         logging.info(f"")
         logging.info(f"Top 5 Factor Exposure Differences (Final vs Benchmark):")
@@ -568,4 +412,4 @@ def main():
         raise
 
 if __name__ == "__main__":
-    main() 
+    main()
