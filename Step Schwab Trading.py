@@ -729,8 +729,24 @@ def build_trade_plan(
     zero_target_holdings = sorted(set(current_qty.index) - set(target_weights.index) - {SNAXX_SYMBOL})
     zero_target_value = float(current_mv.reindex(zero_target_holdings).fillna(0.0).sum()) if zero_target_holdings else 0.0
 
+    # SNAXX (Schwab Government Money Fund) is deliberately excluded from the
+    # sell loop above -- it's a cash-equivalent sweep holding outside the
+    # 33-ETF rotation universe, never a rebalance target. But Schwab's
+    # liquidationValue (-> total_equity) includes its market value like any
+    # other position. Without this exclusion, `allocatable` below would size
+    # target BUY dollars against money that can never actually be raised
+    # (SNAXX is never sold to fund it), silently under-investing the book
+    # whenever SNAXX holds a material balance -- the shortfall would only
+    # surface later as an unexplained buy-side scale-down in
+    # scale_buy_plan_to_cash(). Treating it like the cash buffer (excluded
+    # up front) makes the under-investment explicit and visible in the
+    # summary table instead. (Independent adversarial review, 2026-06-30;
+    # confirmed dormant -- $0 SNAXX in both live accounts -- but real if a
+    # SNAXX balance is ever swept in.)
+    snaxx_value = float(current_mv.get(SNAXX_SYMBOL, 0.0))
+
     cash_buffer = total_equity * config.cash_buffer_pct
-    allocatable = max(0.0, total_equity - cash_buffer)
+    allocatable = max(0.0, total_equity - cash_buffer - snaxx_value)
 
     rows = []
     for etf in sorted(set(target_weights.index) | (set(current_qty.index) - {SNAXX_SYMBOL})):
@@ -771,6 +787,7 @@ def build_trade_plan(
         {"Metric": "Total Equity (from Schwab)", "Value": f"${total_equity:,.2f}"},
         {"Metric": "Investable Cash", "Value": f"${investable_cash:,.2f}"},
         {"Metric": "Cash Buffer (3%)", "Value": f"${cash_buffer:,.2f}"},
+        {"Metric": "SNAXX Value (excluded from allocatable -- never sold)", "Value": f"${snaxx_value:,.2f}"},
         {"Metric": "Allocatable Equity", "Value": f"${allocatable:,.2f}"},
         {"Metric": "Gross Buy Dollars", "Value": f"${gross_buy:,.2f}"},
         {"Metric": "Gross Sell Dollars", "Value": f"${gross_sell:,.2f}"},

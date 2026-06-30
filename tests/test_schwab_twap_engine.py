@@ -53,6 +53,14 @@ BACKGROUND — bugs this suite specifically guards against (fixed 2026-06-30):
     4. Cancelled orders were carried forward (resubmitted) even when their
        final status could not be confirmed as broker-terminal — risking a
        duplicate fill if the "cancelled" order was secretly still working.
+    5. A carry-cap deferred-excess field was overwritten instead of
+       accumulated, silently losing shares after a burst of failed slices.
+    6. A submit exception after Schwab may have already accepted the order
+       triggered a blind resubmission with no account-history reconciliation.
+    7. SNAXX's market value was counted into investable equity even though
+       SNAXX is never sold, silently under-investing the book whenever a
+       SNAXX balance is held (confirmed dormant -- $0 in both live accounts
+       at fix time -- but real if a balance is ever swept in).
 
 DEPENDENCIES:
     - pytest
@@ -1042,6 +1050,80 @@ def test_scale_buy_plan_unaffected_when_cash_is_plentiful():
         reference_prices=reference_prices, total_equity=6_700_000.0,
     )
     assert scaled.loc[0, "Shares to Trade"] == 1000
+
+
+# ============================================================================
+# 19. SNAXX VALUE EXCLUDED FROM ALLOCATABLE (B3, fixed 2026-06-30, raised by
+#     an independent GLM-style review and confirmed dormant -- $0 SNAXX in
+#     both live accounts at fix time, but real if a balance is ever swept in)
+# ============================================================================
+
+def test_snaxx_value_excluded_from_allocatable_and_never_traded():
+    """SNAXX is a cash-equivalent sweep holding outside the ETF rotation
+    universe and is never sold by build_trade_plan -- but before this fix,
+    its market value was still counted into `allocatable` (derived from
+    Schwab's total_equity), so BUY targets were sized against money that
+    could never actually be raised. With the fix, allocatable excludes
+    SNAXX's value entirely, and SNAXX itself never appears as a plan row
+    (no phantom BUY/SELL of a non-strategy symbol)."""
+    holdings = pd.DataFrame([
+        {"Symbol": "SNAXX", "Market Value": 1_000_000.0, "Long Quantity": 1_000_000.0},
+        {"Symbol": "EWZ", "Market Value": 100_000.0, "Long Quantity": 2_000.0},
+    ])
+    target_weights = pd.Series({"EWZ": 1.0})
+    reference_prices = pd.Series({"EWZ": 50.0})
+    config = make_config(cash_buffer_pct=0.0, min_trade_dollars=0.0)
+
+    # total_equity = $2,000,000 (the $1,000,000 SNAXX sweep + $1,000,000 of
+    # other account value not reflected in `holdings` here, e.g. cash) --
+    # mirrors a real account where total_equity (Schwab's liquidationValue)
+    # is independent of what's summed from the positions list.
+    plan, summary = sst.build_trade_plan(
+        target_weights=target_weights, holdings=holdings,
+        investable_cash=0.0, total_equity=2_000_000.0,
+        reference_prices=reference_prices, config=config,
+    )
+
+    # SNAXX must never appear as a tradeable row -- it's not in the
+    # universe and must not be bought, sold, or even listed as HOLD.
+    assert "SNAXX" not in set(plan["Symbol"])
+
+    # allocatable = total_equity - cash_buffer - snaxx_value
+    #             = 2,000,000 - 0 - 1,000,000 = 1,000,000
+    # EWZ target weight 1.0 -> target dollars = $1,000,000 -> target qty
+    # 20,000 shares @ $50. WITHOUT the fix, allocatable would have been the
+    # full $2,000,000 (target qty 40,000) -- double the correct size.
+    ewz_row = plan.loc[plan["Symbol"] == "EWZ"].iloc[0]
+    assert ewz_row["Target Shares"] == 20_000
+    assert ewz_row["Target Dollars"] == pytest.approx(1_000_000.0)
+
+    snaxx_summary_row = summary.loc[summary["Metric"].str.contains("SNAXX", case=False)]
+    assert len(snaxx_summary_row) == 1
+    assert "1,000,000.00" in snaxx_summary_row.iloc[0]["Value"]
+
+
+def test_zero_snaxx_balance_is_a_no_op_for_allocatable():
+    """Regression guard for the common (current real-account) case: if
+    SNAXX is not held at all, the fix must be a complete no-op -- allocatable
+    is exactly total_equity minus the cash buffer, same as before the fix."""
+    holdings = pd.DataFrame([
+        {"Symbol": "EWZ", "Market Value": 100_000.0, "Long Quantity": 2_000.0},
+    ])
+    target_weights = pd.Series({"EWZ": 1.0})
+    reference_prices = pd.Series({"EWZ": 50.0})
+    config = make_config(cash_buffer_pct=0.03, min_trade_dollars=0.0)
+
+    plan, summary = sst.build_trade_plan(
+        target_weights=target_weights, holdings=holdings,
+        investable_cash=0.0, total_equity=1_000_000.0,
+        reference_prices=reference_prices, config=config,
+    )
+    # allocatable = 1,000,000 * (1 - 0.03) - 0 = 970,000 -> 19,400 shares @ $50
+    ewz_row = plan.loc[plan["Symbol"] == "EWZ"].iloc[0]
+    assert ewz_row["Target Shares"] == 19_400
+
+    snaxx_summary_row = summary.loc[summary["Metric"].str.contains("SNAXX", case=False)]
+    assert snaxx_summary_row.iloc[0]["Value"] == "$0.00"
 
 
 if __name__ == "__main__":
