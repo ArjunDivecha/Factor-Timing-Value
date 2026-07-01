@@ -1344,7 +1344,7 @@ def execute_twap_leg(
 
             if dashboard:
                 dashboard.update_quote(sym, action, q.bid, q.ask)
-                dashboard.update_slice_start(sym, action, si + 1, limit_px, arrival)
+                dashboard.update_slice_start(sym, action, si + 1, limit_px, arrival, order_qty=qty)
 
             payload = _build_limit_payload(sym, qty, action, limit_px)
 
@@ -1360,6 +1360,7 @@ def execute_twap_leg(
                     st["carry"] += qty
                     msg = f"{sym}: preflight rejected — {preview_reason}"
                     if dashboard:
+                        dashboard.mark_order_status(sym, action, si + 1, "REJECTED", notes=preview_reason)
                         dashboard.add_log(f"[bold red]PREFLIGHT REJECTED[/bold red] {msg}")
                         dashboard.refresh()
                     else:
@@ -1490,7 +1491,7 @@ def execute_twap_leg(
                     prev = slice_fills.get(sym, 0)
                     if fq > prev and dashboard:
                         fp = _avg_fill_price(od)
-                        dashboard.update_fill(sym, action, fq - prev, fp)
+                        dashboard.update_fill(sym, action, fq - prev, fp, slice_num=si + 1)
                         dashboard.refresh()
                     slice_fills[sym] = max(slice_fills.get(sym, 0), fq)
 
@@ -1584,6 +1585,8 @@ def execute_twap_leg(
                 else:
                     print(f"    MANUAL REQUIRED: {msg}")
                 notify_user(config, f"T2 TWAP: MANUAL RECONCILIATION REQUIRED ({sym})", msg)
+                if dashboard:
+                    dashboard.mark_order_status(sym, action, si + 1, "MANUAL_REQUIRED", notes=notes)
             else:
                 fq = int(float(od.get("filledQuantity", 0) or 0))
                 fq = max(fq, prev)  # never regress below a previously observed fill
@@ -1593,7 +1596,7 @@ def execute_twap_leg(
                 notes = "" if is_complete else f"Partial: {fq}/{qty}"
 
             if actual > prev and dashboard:
-                dashboard.update_fill(sym, action, actual - prev, fp)
+                dashboard.update_fill(sym, action, actual - prev, fp, slice_num=si + 1)
 
             # Confirmed-terminal symbols carry their true remainder forward;
             # manual_required symbols carry nothing (see above) — they are
@@ -1659,6 +1662,9 @@ def execute_twap_leg(
 
             if dashboard and mkt_quote:
                 dashboard.update_quote(sym, action, mkt_quote.bid, mkt_quote.ask)
+                # Cleanup uses a market order (no limit price of our own),
+                # so limit_price=0.0 -- the blotter renders that as "MKT".
+                dashboard.update_slice_start(sym, action, num_slices + 1, 0.0, arrival, order_qty=qty)
 
             # -- Spread guard + fail-CLOSED quote check: a blind market      --
             # -- order on a wide-spread ETF (or with NO quote at all) can    --
@@ -1686,6 +1692,7 @@ def execute_twap_leg(
                     f"{qty} shares remain unfilled."
                 )
                 if dashboard:
+                    dashboard.mark_order_status(sym, action, num_slices + 1, "SKIPPED", notes=skip_reason)
                     dashboard.add_log(f"[bold red]CLEANUP SKIPPED[/bold red] {msg}")
                     dashboard.refresh()
                 else:
@@ -1732,6 +1739,7 @@ def execute_twap_leg(
                         )
                         notify_user(config, "T2 TWAP: UNRECOVERABLE market order ID", msg)
                     if dashboard:
+                        dashboard.mark_order_status(sym, action, num_slices + 1, "FAILED", notes=msg)
                         dashboard.add_log(f"[red]MKT SUBMIT FAILED[/red] {msg}")
                         dashboard.refresh()
                     all_results.append(SliceResult(
@@ -1757,6 +1765,7 @@ def execute_twap_leg(
                         "fill state unknown. MANUAL RECONCILIATION REQUIRED."
                     )
                     if dashboard:
+                        dashboard.mark_order_status(sym, action, num_slices + 1, "UNKNOWN", notes=notes)
                         dashboard.add_log(f"[bold red]STATUS UNKNOWN[/bold red] {sym}: market order status check failed")
                         dashboard.refresh()
                     notify_user(
@@ -1772,7 +1781,7 @@ def execute_twap_leg(
                     notes = "Market order cleanup" + ("" if is_complete else f" (partial {fq}/{qty})")
 
                 if actual > 0 and dashboard:
-                    dashboard.update_fill(sym, action, actual, fp)
+                    dashboard.update_fill(sym, action, actual, fp, slice_num=num_slices + 1)
                     slip_info = ""
                     if fp and arrival > 0:
                         s = ((arrival - fp) / arrival * 1e4) if action == "SELL" else ((fp - arrival) / arrival * 1e4)

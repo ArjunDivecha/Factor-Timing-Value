@@ -12,12 +12,18 @@ AUTHOR: Arjun Divecha
 
 DESCRIPTION:
     A live-updating terminal dashboard for monitoring TWAP order execution.
-    Uses the Rich library to render a continuously-refreshing table showing:
-      - Each order's symbol, action, total/filled quantities
-      - Live bid/ask/spread from Schwab NBBO
-      - Our limit price for the current slice
-      - VWAP of fills so far and slippage vs arrival mid
-      - Per-slice progress and overall completion
+    Uses the Rich library to render a continuously-refreshing display showing:
+      - A per-symbol summary table (aggregated across all slices so far):
+        total/filled quantities, live bid/ask/spread, current slice's limit
+        price, blended VWAP of all fills, and slippage vs arrival mid.
+      - An ORDER BLOTTER — one row per individual order actually submitted
+        to Schwab, in submission order: slice #, the exact limit price WE
+        SUBMITTED for that order, and the ACTUAL fill price/qty Schwab
+        reported back for it. This is the ground truth of what really
+        happened order-by-order (the summary table above only shows a
+        blended average across all slices, which hides per-slice execution
+        quality). (Added 2026-07-01 after live-monitoring feedback that the
+        aggregated view alone wasn't enough.)
 
     The dashboard is designed to be driven by the TWAP engine in
     Step Schwab Trading.py. The engine calls dashboard.update_*() methods
@@ -43,6 +49,33 @@ from rich.text import Text
 # ---------------------------------------------------------------------------
 # Data structures the dashboard tracks
 # ---------------------------------------------------------------------------
+
+@dataclass
+class BlotterRow:
+    """One row in the order blotter = one individual order actually
+    submitted to Schwab (i.e. one TWAP slice). Distinct from OrderState,
+    which aggregates ALL of a symbol's slices into a single blended VWAP —
+    the blotter preserves each order's own limit price and own fill price
+    so nothing is averaged away."""
+    time: str
+    symbol: str
+    action: str
+    slice_num: int
+    order_qty: int
+    limit_price: float
+    arrival_mid: float
+    filled_qty: int = 0
+    fill_price: float | None = None
+    status: str = "SUBMITTED"
+
+    @property
+    def slip_bps(self) -> float | None:
+        if self.fill_price is None or self.arrival_mid <= 0:
+            return None
+        if self.action == "SELL":
+            return (self.arrival_mid - self.fill_price) / self.arrival_mid * 1e4
+        return (self.fill_price - self.arrival_mid) / self.arrival_mid * 1e4
+
 
 @dataclass
 class OrderState:
@@ -109,9 +142,9 @@ class TwapDashboard:
 
         with dashboard.live():
             # TWAP engine loop:
-            dashboard.update_quote("EWZ", bid=34.50, ask=34.55)
-            dashboard.update_slice_start("EWZ", slice_num=1, limit_price=34.49)
-            dashboard.update_fill("EWZ", filled_qty=100, fill_price=34.50)
+            dashboard.update_quote("EWZ", "SELL", bid=34.50, ask=34.55)
+            dashboard.update_slice_start("EWZ", "SELL", slice_num=1, limit_price=34.49, arrival_mid=34.52)
+            dashboard.update_fill("EWZ", "SELL", slice_filled_qty=100, fill_price=34.50)
             ...
     """
 
@@ -138,6 +171,11 @@ class TwapDashboard:
         self._live: Live | None = None
         self.log_lines: list[str] = []
 
+        # Order blotter: ground-truth, one row per order actually submitted
+        # to Schwab (never averaged away like OrderState's blended VWAP).
+        self.blotter: list[BlotterRow] = []
+        self._blotter_index: dict[tuple[str, str, int], BlotterRow] = {}
+
     def add_order(self, symbol: str, action: str, total_qty: int, total_slices: int) -> None:
         key = f"{symbol}_{action}"
         self.orders[key] = OrderState(
@@ -157,7 +195,16 @@ class TwapDashboard:
 
     def update_slice_start(
         self, symbol: str, action: str, slice_num: int, limit_price: float, arrival_mid: float,
+        order_qty: int | None = None,
     ) -> None:
+        """Called once per order right before/as it is submitted to Schwab.
+
+        order_qty (new 2026-07-01): when provided, also opens a new BLOTTER
+        row for this exact order — the row that records what limit price WE
+        submitted and (via update_fill) what price it actually filled at.
+        Without order_qty, only the aggregated OrderState is updated (kept
+        optional so callers that don't have qty on hand yet still work).
+        """
         key = f"{symbol}_{action}"
         if key in self.orders:
             o = self.orders[key]
@@ -167,9 +214,27 @@ class TwapDashboard:
                 o.arrival_mid = arrival_mid
             o.status = "WORKING"
 
+        if order_qty is not None:
+            row = BlotterRow(
+                time=datetime.now().strftime("%H:%M:%S"),
+                symbol=symbol, action=action, slice_num=slice_num,
+                order_qty=order_qty, limit_price=limit_price, arrival_mid=arrival_mid,
+            )
+            self.blotter.append(row)
+            self._blotter_index[(symbol, action, slice_num)] = row
+            if len(self.blotter) > 500:
+                # Cap memory for very long/many-symbol runs; drop oldest.
+                dropped = self.blotter.pop(0)
+                self._blotter_index.pop((dropped.symbol, dropped.action, dropped.slice_num), None)
+
     def update_fill(
         self, symbol: str, action: str, slice_filled_qty: int, fill_price: float | None,
+        slice_num: int | None = None,
     ) -> None:
+        """Record an incremental fill. slice_num (new 2026-07-01), when
+        provided, also updates the matching blotter row's own fill price/qty
+        (blended across however many partial-fill updates that one order
+        gets) instead of only the cross-slice-averaged OrderState.vwap."""
         key = f"{symbol}_{action}"
         if key in self.orders:
             o = self.orders[key]
@@ -183,6 +248,31 @@ class TwapDashboard:
                 "price": fill_price, "time": datetime.now().strftime("%H:%M:%S"),
             })
 
+        if slice_num is not None:
+            row = self._blotter_index.get((symbol, action, slice_num))
+            if row is not None and slice_filled_qty > 0:
+                if fill_price and fill_price > 0:
+                    prior_notional = (row.fill_price or 0.0) * row.filled_qty
+                    row.filled_qty += slice_filled_qty
+                    row.fill_price = (prior_notional + fill_price * slice_filled_qty) / row.filled_qty
+                else:
+                    row.filled_qty += slice_filled_qty
+                row.status = "FILLED" if row.filled_qty >= row.order_qty else "PARTIAL"
+
+    def mark_order_status(
+        self, symbol: str, action: str, slice_num: int, status: str, notes: str = "",
+    ) -> None:
+        """Directly set a blotter row's status (REJECTED, SKIPPED, FAILED,
+        UNKNOWN, MANUAL_REQUIRED, ...) for orders that never filled or were
+        never even sent, so the blotter still shows the ground truth of
+        every attempt, not just the ones that filled."""
+        row = self._blotter_index.get((symbol, action, slice_num))
+        if row is not None:
+            row.status = status
+        # else: no matching row (e.g. preflight-rejected before a row was
+        # ever opened) -- caller should have opened one via
+        # update_slice_start(..., order_qty=...) first if a row is wanted.
+
     def update_order_status(self, symbol: str, action: str, status: str) -> None:
         key = f"{symbol}_{action}"
         if key in self.orders:
@@ -191,8 +281,8 @@ class TwapDashboard:
     def add_log(self, message: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_lines.append(f"[dim]{ts}[/dim] {message}")
-        if len(self.log_lines) > 8:
-            self.log_lines = self.log_lines[-8:]
+        if len(self.log_lines) > 15:
+            self.log_lines = self.log_lines[-15:]
 
     def _build_header(self) -> Panel:
         elapsed = time.monotonic() - self.start_time
@@ -222,16 +312,30 @@ class TwapDashboard:
 
         return Panel(header_text, style="blue")
 
-    def _build_orders_table(self, leg: str) -> Table:
-        title_style = "bold red" if leg == "SELL" else "bold green"
+    def _build_orders_table(self) -> Table:
+        """A SINGLE combined table for BOTH legs (Side column distinguishes
+        SELL/BUY), sorted SELL-then-BUY, each in add_order() order.
+
+        Previously this rendered as TWO separate full-height tables (one
+        per leg). On accounts with 20-30+ symbols, two full tables plus the
+        header/summary/blotter/log routinely exceeded the terminal's actual
+        height -- and Rich's Live(screen=True) does NOT scroll, it just
+        silently clips anything past the bottom of the screen. That's what
+        made the BUY leg (rendered second, i.e. further down/off-screen)
+        appear to "not show" during a live run even though it was executing
+        correctly. One combined table for both legs is shorter overall (one
+        title/header/border instead of two) and keeps every symbol's status
+        together in a single scroll-free view. (Fixed 2026-07-01.)
+        """
         table = Table(
-            title=f"  {leg} LEG  ",
-            title_style=title_style,
+            title="  ORDERS (all legs)  ",
+            title_style="bold white",
             show_header=True,
             header_style="bold",
             border_style="dim",
             expand=True,
         )
+        table.add_column("Side", min_width=4)
         table.add_column("Symbol", style="bold white", min_width=6)
         table.add_column("Total Qty", justify="right", min_width=9)
         table.add_column("Filled", justify="right", min_width=8)
@@ -245,46 +349,70 @@ class TwapDashboard:
         table.add_column("Slip(bps)", justify="right", min_width=9)
         table.add_column("Status", justify="center", min_width=9)
 
-        for key in self.order_sequence:
-            o = self.orders[key]
-            if o.action != leg:
-                continue
+        shown = 0
+        for leg in ("SELL", "BUY"):
+            for key in self.order_sequence:
+                o = self.orders[key]
+                if o.action != leg:
+                    continue
+                # Once we've moved on to the other leg, a FULLY FILLED order
+                # from the leg we already finished is no longer actionable
+                # information -- keep the table showing what's actually
+                # happening now (plus anything from an earlier leg that's
+                # STILL incomplete, which is exactly the kind of thing that
+                # needs to stay visible). This is what keeps the combined
+                # table's height bounded to whichever leg is active, instead
+                # of always showing SELL+BUY simultaneously (25+11 rows),
+                # which is what overflowed most terminal windows.
+                if leg != self.current_leg and o.status == "FILLED" and self.current_leg:
+                    continue
+                shown += 1
 
-            fill_pct = o.pct_filled
-            vwap = o.vwap
-            slip = o.slippage_bps
+                fill_pct = o.pct_filled
+                vwap = o.vwap
+                slip = o.slippage_bps
 
-            pct_style = "green" if fill_pct >= 100 else ("yellow" if fill_pct > 0 else "dim")
-            status_style = {
-                "FILLED": "bold green",
-                "WORKING": "bold yellow",
-                "PENDING": "dim",
-                "PARTIAL": "bold red",
-                "FAILED": "bold red",
-                "CANCELLED": "dim red",
-            }.get(o.status, "white")
+                pct_style = "green" if fill_pct >= 100 else ("yellow" if fill_pct > 0 else "dim")
+                status_style = {
+                    "FILLED": "bold green",
+                    "WORKING": "bold yellow",
+                    "PENDING": "dim",
+                    "PARTIAL": "bold red",
+                    "FAILED": "bold red",
+                    "CANCELLED": "dim red",
+                }.get(o.status, "white")
 
-            slip_style = "white"
-            if slip is not None:
-                slip_style = "green" if slip <= 5 else ("yellow" if slip <= 15 else "red")
+                slip_style = "white"
+                if slip is not None:
+                    slip_style = "green" if slip <= 5 else ("yellow" if slip <= 15 else "red")
 
-            spread_str = f"{o.spread_bps:.0f}" if o.bid > 0 else "—"
-            spread_style = "green" if o.spread_bps < 20 else ("yellow" if o.spread_bps < 100 else "red")
+                spread_str = f"{o.spread_bps:.0f}" if o.bid > 0 else "—"
+                spread_style = "green" if o.spread_bps < 20 else ("yellow" if o.spread_bps < 100 else "red")
+                side_style = "bold red" if leg == "SELL" else "bold green"
 
-            table.add_row(
-                o.symbol,
-                f"{o.total_qty:,}",
-                f"{o.filled_qty:,}",
-                Text(f"{fill_pct:.0f}%", style=pct_style),
-                f"{o.current_slice}/{o.total_slices}" if o.current_slice > 0 else "—",
-                f"{o.bid:.2f}" if o.bid > 0 else "—",
-                f"{o.ask:.2f}" if o.ask > 0 else "—",
-                Text(spread_str, style=spread_style),
-                f"{o.last_limit:.2f}" if o.last_limit > 0 else "—",
-                f"{vwap:.4f}" if vwap else "—",
-                Text(f"{slip:.1f}", style=slip_style) if slip is not None else Text("—", style="dim"),
-                Text(o.status, style=status_style),
+                table.add_row(
+                    Text(leg, style=side_style),
+                    o.symbol,
+                    f"{o.total_qty:,}",
+                    f"{o.filled_qty:,}",
+                    Text(f"{fill_pct:.0f}%", style=pct_style),
+                    f"{o.current_slice}/{o.total_slices}" if o.current_slice > 0 else "—",
+                    f"{o.bid:.2f}" if o.bid > 0 else "—",
+                    f"{o.ask:.2f}" if o.ask > 0 else "—",
+                    Text(spread_str, style=spread_style),
+                    f"{o.last_limit:.2f}" if o.last_limit > 0 else "—",
+                    f"{vwap:.4f}" if vwap else "—",
+                    Text(f"{slip:.1f}", style=slip_style) if slip is not None else Text("—", style="dim"),
+                    Text(o.status, style=status_style),
+                )
+
+        hidden = len(self.orders) - shown
+        if hidden > 0:
+            table.caption = (
+                f"({hidden} fully-filled order(s) from a completed leg collapsed "
+                f"to save space -- all filled, nothing hidden that needs action)"
             )
+            table.caption_style = "dim"
 
         return table
 
@@ -325,32 +453,138 @@ class TwapDashboard:
 
         return Panel(text, title="Execution Summary", border_style="dim")
 
-    def _build_log(self) -> Panel:
+    def _build_blotter(self, max_rows: int = 25) -> Panel:
+        """Order-level ground truth: every individual order submitted to
+        Schwab, its own limit price, and its own actual fill price — not
+        blended across slices like the per-symbol summary table above."""
+        table = Table(
+            title="  ORDER BLOTTER (every order submitted -- limit vs. actual fill)  ",
+            title_style="bold white",
+            show_header=True,
+            header_style="bold",
+            border_style="dim",
+            expand=True,
+        )
+        table.add_column("Time", min_width=8)
+        table.add_column("Symbol", style="bold white", min_width=6)
+        table.add_column("Side", min_width=4)
+        table.add_column("Slice", justify="center", min_width=5)
+        table.add_column("Order Qty", justify="right", min_width=9)
+        table.add_column("Limit Px", justify="right", min_width=9, style="bold cyan")
+        table.add_column("Fill Qty", justify="right", min_width=8)
+        table.add_column("Fill Px", justify="right", min_width=9)
+        table.add_column("Slip(bps)", justify="right", min_width=9)
+        table.add_column("Status", justify="center", min_width=10)
+
+        status_style = {
+            "FILLED": "bold green",
+            "PARTIAL": "bold yellow",
+            "SUBMITTED": "yellow",
+            "REJECTED": "bold red",
+            "FAILED": "bold red",
+            "SKIPPED": "dim red",
+            "UNKNOWN": "bold red",
+            "MANUAL_REQUIRED": "bold red",
+        }
+
+        rows = self.blotter[-max_rows:]
+        for row in rows:
+            slip = row.slip_bps
+            slip_style = "white"
+            if slip is not None:
+                slip_style = "green" if slip <= 5 else ("yellow" if slip <= 15 else "red")
+            side_style = "bold red" if row.action == "SELL" else "bold green"
+            table.add_row(
+                row.time,
+                row.symbol,
+                Text(row.action, style=side_style),
+                str(row.slice_num),
+                f"{row.order_qty:,}",
+                f"{row.limit_price:.4f}" if row.limit_price > 0 else "MKT",
+                f"{row.filled_qty:,}" if row.filled_qty > 0 else "—",
+                f"{row.fill_price:.4f}" if row.fill_price else "—",
+                Text(f"{slip:.1f}", style=slip_style) if slip is not None else Text("—", style="dim"),
+                Text(row.status, style=status_style.get(row.status, "white")),
+            )
+
+        if not rows:
+            table.add_row("—", "—", "—", "—", "—", "—", "—", "—", "—", Text("Waiting...", style="dim"))
+
+        return table
+
+    def _build_log(self, max_lines: int | None = None) -> Panel:
+        lines = self.log_lines if max_lines is None else self.log_lines[-max_lines:]
         log_text = Text()
-        for i, line in enumerate(self.log_lines):
+        for i, line in enumerate(lines):
             if i > 0:
                 log_text.append("\n")
             log_text.append_text(Text.from_markup(line))
-        if not self.log_lines:
+        if not lines:
             log_text.append("Waiting...", style="dim")
         return Panel(log_text, title="Activity Log", border_style="dim")
 
+    def _measured_height(self, renderable: Any) -> int:
+        """Actual number of terminal rows a renderable will occupy at the
+        console's current width -- NOT a guess. Rich's Live(screen=True)
+        does not scroll: anything beyond the terminal's real height is
+        simply invisible with no warning, which is exactly what silently
+        hid the BUY leg / blotter / log on wide, many-symbol accounts
+        before this fix (2026-07-01)."""
+        try:
+            return len(self.console.render_lines(renderable, self.console.options))
+        except Exception:
+            return 0
+
     def render(self) -> Group:
-        """Build the full dashboard as a vertical stack of renderables."""
-        parts = [self._build_header()]
+        """Build the full dashboard as a vertical stack of renderables,
+        sized to actually fit the real terminal height. The order table,
+        header, and summary are always shown in full (they're the
+        highest-priority info); the blotter and activity log then split
+        whatever vertical room is left, shrinking automatically on a
+        smaller terminal instead of silently rendering off-screen.
 
-        has_sells = any(o.action == "SELL" for o in self.orders.values())
-        has_buys = any(o.action == "BUY" for o in self.orders.values())
+        This uses an ACTUAL measure-and-shrink loop rather than a fixed
+        per-row overhead estimate, because a Table's real height depends on
+        box-drawing style/title/border lines (Rich version-dependent) AND
+        on text wrapping (a long activity-log message can wrap to more than
+        one rendered line in a narrow terminal) -- a naive "N items = N
+        rows" budget can still overflow in those cases. Iteratively
+        measuring the real rendered height and shrinking guarantees nothing
+        is silently clipped off-screen, which is the exact bug this whole
+        redesign fixes (2026-07-01).
+        """
+        fixed_parts = [self._build_header()]
 
-        if has_sells:
-            parts.append(self._build_orders_table("SELL"))
-        if has_buys:
-            parts.append(self._build_orders_table("BUY"))
-        if not has_sells and not has_buys:
-            parts.append(Panel("No orders.", style="dim"))
+        if self.orders:
+            fixed_parts.append(self._build_orders_table())
+        else:
+            fixed_parts.append(Panel("No orders.", style="dim"))
 
-        parts.append(self._build_summary())
-        parts.append(self._build_log())
+        fixed_parts.append(self._build_summary())
+
+        terminal_height = self.console.size.height
+        used = sum(self._measured_height(p) for p in fixed_parts)
+
+        blotter_rows = max(1, min(25, len(self.blotter) or 1))
+        log_rows = max(1, min(15, len(self.log_lines) or 1))
+
+        blotter_panel = self._build_blotter(max_rows=blotter_rows)
+        log_panel = self._build_log(max_lines=log_rows)
+
+        for _ in range(40):
+            total = used + self._measured_height(blotter_panel) + self._measured_height(log_panel)
+            if total <= terminal_height - 1:
+                break
+            if log_rows > 1:
+                log_rows -= 1
+                log_panel = self._build_log(max_lines=log_rows)
+            elif blotter_rows > 1:
+                blotter_rows -= 1
+                blotter_panel = self._build_blotter(max_rows=blotter_rows)
+            else:
+                break  # both already at minimum -- nothing more to shrink
+
+        parts = fixed_parts + [blotter_panel, log_panel]
 
         return Group(*parts)
 
