@@ -55,3 +55,8 @@ net (validated via the real Step Nine in the classic repo) and is basic risk man
 If AUM changes materially, update `LIQ_AUM` and refresh ADV via
 `Experiments Deep Dive/Step Tcost Impact Model.py`. Full write-up: classic repo README note
 (2026-06-24) and llmchat.md.
+
+COST RETRACTION (2026-07-13, Arjun's directive): cost estimates (incl. the 25-40bps figure)
+are for EXECUTION/IMPLEMENTATION only — never gate, penalize, or kill RESEARCH on cost or
+turnover grounds; evaluate all research/backtests GROSS. Research conclusions previously
+rejected purely on cost hurdles count as UNTESTED, not dead.
