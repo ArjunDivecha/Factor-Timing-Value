@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Operations runbook"
+openwiki_generated: true
+---
+
 # Operations runbook
 
 This page captures the practical commands and checks that matter most when working in the repository.

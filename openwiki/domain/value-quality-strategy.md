@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Strategy and domain model"
+openwiki_generated: true
+---
+
 # Strategy and domain model
 
 This repository implements a value/quality-oriented factor timing system. The learned project notes in `AGENTS.md` are important here because they describe the active production intent more precisely than the filenames alone.

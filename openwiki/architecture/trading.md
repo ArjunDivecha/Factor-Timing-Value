@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Trading and live execution"
+openwiki_generated: true
+---
+
 # Trading and live execution
 
 This repository includes a live Schwab execution path built around a TWAP engine and a terminal dashboard. This is distinct from the research pipeline: it consumes final target country weights and converts them into broker orders.

@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "OpenWiki quickstart"
+openwiki_generated: true
+---
+
 # OpenWiki quickstart
 
 This repository is a factor-timing and country-allocation research pipeline with a live Schwab trading extension. The main flow builds country/factor signals, converts them into country weights, evaluates performance, generates reports, and can optionally trade a target portfolio through a TWAP execution engine.

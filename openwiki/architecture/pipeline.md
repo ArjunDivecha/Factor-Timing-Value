@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Pipeline architecture"
+openwiki_generated: true
+---
+
 # Pipeline architecture
 
 The research pipeline is a stepwise script flow. Most scripts are standalone executables that read and write Excel/CSV/PDF artifacts in the repository root, so the contract between steps matters more than any individual script implementation.

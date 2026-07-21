@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-07-05T04:08:35.997Z",
-  "command": "init",
-  "gitHead": "11da5f873b2d946b0aed4b4e7f61eeaaab4e3527",
-  "model": "openai/gpt-5.4-mini"
+  "updatedAt": "2026-07-21T10:24:29.276Z",
+  "command": "update",
+  "gitHead": "2b789c710f4090237ae68b895c8fa68a82aceaa2",
+  "model": "z-ai/glm-5.2"
 }
