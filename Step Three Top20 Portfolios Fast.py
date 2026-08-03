@@ -9,13 +9,15 @@ INPUT FILES:
 - Portfolio_Data.xlsx (sheet "Benchmarks": equal-weight benchmark returns)
 
 OUTPUT FILES:
-- T2 Top20.xlsx            # performance table sorted by IR
+- T2 Top20.xlsx            # performance tables sorted by IR, one sheet per window:
+                          #   Full_Sample, Trailing_1Y (12m), Trailing_3Y (36m),
+                          #   Trailing_5Y (60m) — on the benchmark calendar
 - T2 Top20.pdf             # cumulative excess-return charts
 - T2_Top_20_Exposure.csv   # monthly country weights (0-1, not just binary)
 
-VERSION: 3.2 – FAST optimized version (identical output to original)
-LAST UPDATED: 2025-12-03
-AUTHOR: Claude Code (optimized for speed)
+VERSION: 3.3 – FAST + trailing 1Y/3Y/5Y Excel sheets (ported from Archive soft-band Step Three)
+LAST UPDATED: 2026-08-02
+AUTHOR: Claude Code (optimized for speed); trailing sheets restored 2026-08-02
 
 OPTIMIZATIONS:
 - Pre-indexed data lookups using dictionaries instead of repeated DataFrame filtering
@@ -283,6 +285,64 @@ def calculate_turnover(holdings_df: pd.DataFrame) -> float:
     return round(diffs.iloc[1:].mean() * 100, 2)  # exclude first NaN row
 
 
+# Trailing windows: (sheet_name, months) using the benchmark's month-end index
+TRAILING_YEAR_WINDOWS = (
+    ("Trailing_1Y", 12),
+    ("Trailing_3Y", 36),
+    ("Trailing_5Y", 60),
+)
+
+
+def build_trailing_results_table(
+    monthly_returns: Dict[str, pd.Series],
+    monthly_holdings: Dict[str, pd.DataFrame],
+    benchmark_returns: pd.Series,
+    features: list,
+    n_trailing_months: int,
+) -> pd.DataFrame:
+    """
+    Same performance columns as the full-sample table, but only the last
+    ``n_trailing_months`` dates on the benchmark calendar (monthly index).
+    Ported from Archive/Step Three Top20 Portfolios.py (2026-08-02).
+    """
+    monthly_index = benchmark_returns.index.sort_values()
+    if len(monthly_index) == 0:
+        return pd.DataFrame()
+
+    span = min(n_trailing_months, len(monthly_index))
+    last_n = monthly_index[-span:]
+
+    result_cols = [
+        "Feature",
+        "Avg Excess Return (%)",
+        "Volatility (%)",
+        "Information Ratio",
+        "Maximum Drawdown (%)",
+        "Hit Ratio (%)",
+        "Skewness",
+        "Kurtosis",
+        "Beta",
+        "Tracking Error (%)",
+        "Calmar Ratio",
+        "Average Turnover (%)",
+    ]
+
+    rows = []
+    for feature in features:
+        port_rets = monthly_returns[feature]
+        pr = port_rets.reindex(last_n)
+        br = benchmark_returns.reindex(last_n)
+        metrics = calculate_performance_metrics(pr, br)
+        holdings = monthly_holdings[feature]
+        in_win = holdings.index.intersection(last_n)
+        h_sub = holdings.loc[in_win].sort_index()
+        metrics["Average Turnover (%)"] = calculate_turnover(h_sub)
+        rows.append({"Feature": feature, **metrics})
+
+    out = pd.DataFrame(rows)
+    return out[result_cols] if not out.empty else out
+
+
 # ------------------------------------------------------------------
 # Visualisation (pure matplotlib, no seaborn)
 # ------------------------------------------------------------------
@@ -357,11 +417,27 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_dir: str)
             data, features, benchmark_returns
         )
 
-        # Save Excel
+        # Save Excel (full sample + trailing 1Y / 3Y / 5Y on benchmark calendar)
         print("\nSaving results...")
         results = results.sort_values("Information Ratio", ascending=False)
         excel_path = os.path.join(output_dir, "T2 Top20.xlsx")
-        results.to_excel(excel_path, index=False, float_format="%.2f")
+        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+            results.to_excel(
+                writer, sheet_name="Full_Sample", index=False, float_format="%.2f"
+            )
+            for sheet_name, n_months in TRAILING_YEAR_WINDOWS:
+                tail_df = build_trailing_results_table(
+                    monthly_returns,
+                    monthly_holdings,
+                    benchmark_returns,
+                    features,
+                    n_months,
+                )
+                tail_df = tail_df.sort_values("Information Ratio", ascending=False)
+                tail_df.to_excel(
+                    writer, sheet_name=sheet_name, index=False, float_format="%.2f"
+                )
+                print(f"  Excel sheet {sheet_name!r}: last {n_months} benchmark months")
 
         # Charts
         print("Creating charts...")
