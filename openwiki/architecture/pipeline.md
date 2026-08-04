@@ -1,7 +1,7 @@
 ---
-type: "Reference"
-title: "Pipeline architecture"
-openwiki_generated: true
+type: Reference
+title: Pipeline architecture
+description: End-to-end research pipeline flow for the Factor-Timing-Value repository, covering step order, per-stage outputs, and the cross-step file contracts that downstream consumers depend on.
 ---
 
 # Pipeline architecture
@@ -44,7 +44,7 @@ The main sequence is reflected in `Run_All_Pipeline.py` and the command list in 
 - **Step Two Point Five**: creates benchmark return series.
 
 ### Factor construction and optimization
-- **Step Three**: forms top-20 factor portfolios.
+- **Step Three**: forms top-20 factor portfolios. It writes three artifacts: `T2 Top20.xlsx` (performance tables sorted by IR with a `Full_Sample` sheet plus trailing `Trailing_1Y` / `Trailing_3Y` / `Trailing_5Y` sheets on the benchmark calendar), `T2 Top20.pdf` (cumulative excess-return charts), and `T2_Top_20_Exposure.csv` (monthly country weights, 0–1). The exposure CSV is the cross-step contract consumed by Step Six, Step Six Point Five, Step Fourteen, and the market-regime scripts (Fifteen/Sixteen/Seventeen).
 - **Step Four**: turns those portfolios into monthly returns.
 - **Step Five**: selects factor weights over time and writes `T2_rolling_window_weights.xlsx` plus summary stats.
 - **Step Six**: converts factor weights into country alphas using the full factor set.
@@ -79,6 +79,14 @@ The output format must stay compatible with downstream scripts, especially Step 
 - The current active production engine is the Top-3 60-month momentum + hysteresis + trading-cost hurdle variant merged into `Step Five FAST.py`.
 - Factor eligibility is driven by `Step Factor Categories.xlsx`; only factors with `Max > 0` are allowed into the optimization universe.
 
+### Step Three output contract
+`Step Three Top20 Portfolios Fast.py` produces `T2_Top_20_Exposure.csv`, the wide-format monthly country exposure matrix (0–1 weights, not binary) that the rest of the country chain depends on. Downstream readers load it directly:
+- `Step Six Create Country alphas from Factor alphas.py` and `Step Six Point Five.py` multiply exposures by factor alphas.
+- `Step Fourteen Target Optimization.py` (and the LongShort variant) read the same exposure file.
+- The market-regime scripts (Fifteen/Sixteen/Seventeen) consume it for factor attribution.
+
+`T2 Top20.xlsx` carries the IR-sorted performance tables; its `Full_Sample` sheet is the default read for Step Ten's report table, while the trailing `Trailing_1Y` / `Trailing_3Y` / `Trailing_5Y` sheets provide windowed views on the benchmark calendar. Changing the exposure CSV's column order, date format, or weight semantics breaks Step Six and the optimizers, so treat it as a stable contract.
+
 ### Step Eight and Step Nine contract
 `step_fuzzy_bands.py` exists to keep factor-to-country band logic consistent across Step Four and Step Eight. That matters because Step Four produces factor-level returns while Step Eight consumes the same logic for country weights.
 
@@ -96,6 +104,7 @@ The output format must stay compatible with downstream scripts, especially Step 
 - `Run_Limited_Pipeline.py`
 - `CLAUDE.md`
 - `AGENTS.md`
+- `Step Three Top20 Portfolios Fast.py`
 - `Step Five FAST.py`
 - `Step Six Point Five.py`
 - `step_fuzzy_bands.py`

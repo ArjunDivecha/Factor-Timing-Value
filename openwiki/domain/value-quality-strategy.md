@@ -1,12 +1,12 @@
 ---
-type: "Reference"
-title: "Strategy and domain model"
-openwiki_generated: true
+type: Reference
+title: Strategy and domain model
+description: The value/quality-oriented factor timing strategy, covering factor momentum selection, the factor-eligibility whitelist, fuzzy bands, liquidity caps, trading-cost hurdles, and the long-only vs long-short optimizer variants.
 ---
 
 # Strategy and domain model
 
-This repository implements a value/quality-oriented factor timing system. The learned project notes in `AGENTS.md` are important here because they describe the active production intent more precisely than the filenames alone.
+This repository implements a value/quality-oriented factor timing system. The learned project notes in `AGENTS.md` are important here because they describe the active production intent more precisely than the filenames alone. The end-to-end step flow that applies these rules is documented in [Pipeline architecture](../architecture/pipeline.md).
 
 ## Strategy intent
 The active repository variant is the value/quality branch of the broader T2 factor timing work. Its core behavior is:

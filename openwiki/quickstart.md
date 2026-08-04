@@ -1,7 +1,7 @@
 ---
-type: "Reference"
-title: "OpenWiki quickstart"
-openwiki_generated: true
+type: Reference
+title: OpenWiki quickstart
+description: Entry point for the Factor-Timing-Value repository wiki. Explains what the repository does, how the wiki is organized, and where to go next.
 ---
 
 # OpenWiki quickstart

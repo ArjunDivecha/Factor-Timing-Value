@@ -1,7 +1,7 @@
 ---
-type: "Reference"
-title: "Operations runbook"
-openwiki_generated: true
+type: Reference
+title: Operations runbook
+description: Practical commands, safety checks, output artifacts, and testing guidance for running the research pipeline and the Schwab trading engine in the Factor-Timing-Value repository.
 ---
 
 # Operations runbook
@@ -59,6 +59,7 @@ python "Step Schwab Trading.py" --live --confirm-live
 
 ## Output artifacts to watch
 The pipeline and trading scripts create many root-level artifacts. The most important ones are:
+- `T2_Top_20_Exposure.csv` — the Step Three cross-step exposure contract consumed by Step Six, Step Six Point Five, and the optimizers.
 - `T2_rolling_window_weights.xlsx`
 - `T2_strategy_statistics.xlsx`
 - `T2_Country_Top_Alphas.xlsx`

@@ -1,12 +1,12 @@
 ---
-type: "Reference"
-title: "Trading and live execution"
-openwiki_generated: true
+type: Reference
+title: Trading and live execution
+description: The Schwab live-trading path built around a TWAP engine and terminal dashboard. Documents safety behaviors, the fake-broker regression suite, and the dry-run/live boundary.
 ---
 
 # Trading and live execution
 
-This repository includes a live Schwab execution path built around a TWAP engine and a terminal dashboard. This is distinct from the research pipeline: it consumes final target country weights and converts them into broker orders.
+This repository includes a live Schwab execution path built around a TWAP engine and a terminal dashboard. This is distinct from the research pipeline ([Pipeline architecture](pipeline.md)): it consumes final target country weights and converts them into broker orders.
 
 ## Core components
 
@@ -50,11 +50,7 @@ This pytest suite loads the real trading script directly and runs it against a f
 ## Why this matters
 The trading path is a separate risk domain from the research pipeline. Bugs here can create real trades, so the code is intentionally defensive and the test suite is designed to simulate broker failures rather than happy-path trading only.
 
-The recent git history shows this area was hardened in phases:
-- `a95e850` added the TWAP execution engine
-- `062fabc` added safety hardening and the fake-broker regression suite
-- `c1540fe` fixed SNAXX sweep value handling
-- `11da5f8` fixed a dashboard overflow issue and documented the first live run
+This area was hardened in phases: the TWAP execution engine was added first, followed by safety hardening with a fake-broker regression suite, a SNAXX sweep-value handling fix, and a dashboard overflow fix tied to the first live run. (The per-phase commit hashes no longer appear in the repository's squashed history; treat the behaviors above as the durable record.)
 
 ## Change guidance for future agents
 - Read `tests/test_schwab_twap_engine.py` before editing the engine; it encodes the safety contract.
@@ -68,4 +64,3 @@ The recent git history shows this area was hardened in phases:
 - `step_schwab_dashboard.py`
 - `tests/test_schwab_twap_engine.py`
 - `AGENTS.md`
-- git commits `a95e850`, `062fabc`, `c1540fe`, `11da5f8`
