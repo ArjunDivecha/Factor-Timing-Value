@@ -32,8 +32,7 @@ This repository is a factor-timing and country-allocation research pipeline with
 ## Repository shape
 - `Archive/` contains retired or superseded step scripts.
 - `Experiments Deep Dive/` contains analysis and research experiments that should not alter production scripts.
-- `ElasticNet/` appears to be a separate experimental model area.
-- `outputs/` is used by the Schwab execution tooling for dated audit artifacts.
+- `outputs/` is created at runtime by the Schwab execution tooling for dated audit artifacts.
 - Excel files in the repo root are the working data and outputs of the pipeline.
 
 ## Key source files to read next

@@ -73,7 +73,6 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 ## Repository maintenance notes
 - `Archive/` holds retired or superseded scripts and should usually be left alone.
 - `Experiments Deep Dive/` is for sandbox work and model experiments; do not put exploratory logic back into production scripts unless it is intentionally promoted.
-- `ElasticNet/` appears to be a separate modeling area; inspect it only if your change touches that model family.
 - Untracked root files such as `optimization_log.txt` and `T2_Asset_Class_MissingDataLog.txt` are runtime artifacts in this workspace snapshot and may not be intended for documentation changes.
 
 ## Testing guidance
