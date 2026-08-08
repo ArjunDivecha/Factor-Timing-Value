@@ -32,6 +32,7 @@ Use the command list in `CLAUDE.md`. The key scripts are:
 - `Step Two Create Normalized Tidy.py`
 - `Step Three Top20 Portfolios Fast.py`
 - `Step Four Create Monthly Top20 Returns FAST.py`
+- `Step Four Point Five.py`
 - `Step Five FAST.py`
 - `Step Six Point Five.py`
 - `Step Eight Write Country Weights.py`
@@ -63,6 +64,7 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 - `T2_rolling_window_weights.xlsx`
 - `T2_strategy_statistics.xlsx`
 - `T2_Country_Top_Alphas.xlsx`
+- `T2_Tcost.xlsx` — the per-factor trading-cost vector (Step Four Point Five), consumed by the Step Five cost hurdle.
 - `T2_Final_Country_Weights.xlsx`
 - `T2_Final_Portfolio_Returns.xlsx`
 - `T2_Strategy_Report_Comprehensive_*.pdf`

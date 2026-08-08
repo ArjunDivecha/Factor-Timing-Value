@@ -48,7 +48,7 @@ Two additional risk controls are part of the strategy domain:
 - `step_liquidity_cap.py` caps country weights by ADV to avoid infeasible positions in thin ETFs
 - `step_five_multiwindow_stats.py` provides multi-window performance logging for Step Five so recent performance can be compared with the full sample
 
-`AGENTS.md` notes that liquidity control was added because market impact, not just spread, is the dominant risk at the live AUM level.
+`AGENTS.md` notes that liquidity control was added because market impact, not just spread, is the dominant risk at the live AUM level. The same `step_liquidity_cap.py` module is reused by the [Schwab trading engine](../architecture/trading.md), which exposes it through the `--no-liquidity-cap` and `--liq-maxpart` flags.
 
 ## Optimization variants
 `Step Fourteen Target Optimization.py` is the long-only country optimizer. `Step Fourteen Target Optimization LongShort.py` removes the long-only constraint to express true 130/30 style weights.
