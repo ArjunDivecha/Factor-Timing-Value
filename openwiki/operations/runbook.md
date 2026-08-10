@@ -64,7 +64,8 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 - `T2_rolling_window_weights.xlsx`
 - `T2_strategy_statistics.xlsx`
 - `T2_Country_Top_Alphas.xlsx`
-- `T2_Tcost.xlsx` — the per-factor trading-cost vector (Step Four Point Five), consumed by the Step Five cost hurdle.
+- `T2_Trading_Cost.xlsx` — the per-factor monthly trading-cost matrix (Step Four, sheet `Trading_Costs`), consumed by the [Step Five](../architecture/pipeline.md) cost hurdle.
+- `T2_Tcost.xlsx` — a separate weighted-average factor trading-cost file (Step Four Point Five, sheet `Factor_Tcost`); derived but not consumed downstream.
 - `T2_Final_Country_Weights.xlsx`
 - `T2_Final_Portfolio_Returns.xlsx`
 - `T2_Strategy_Report_Comprehensive_*.pdf`
