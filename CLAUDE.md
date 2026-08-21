@@ -1,129 +1,96 @@
-# CLAUDE.md
+# CLAUDE.md — T2 Factor Timing Fuzzy **Value**
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Operator's manual for a coding agent. Global rules (light mode, doc headers, `file://`
+links, FAIL-IS-FAIL, Bloomberg backup) live in `~/CLAUDE.md` and `../../CLAUDE.md` — not
+repeated here. Deeper prose docs are in `openwiki/` (start at `openwiki/quickstart.md`).
 
-## Commands
+## Purpose
+Value/Quality country-allocation research pipeline **with a live real-money Schwab trading
+extension**. It builds factor signals, times factors via 60-month momentum, converts factor
+weights to country weights, backtests/report, and (separately) rebalances Schwab account
+**#167 "Equity Value"** via a TWAP engine. This is the value/quality sibling of
+`../T2 Factor Timing Fuzzy` (the all-factor "Momentum" strategy, account #090); the two share
+the trading engine and must stay in sync (see gotchas).
 
-### Running Individual Steps
+## Architecture map (load-bearing files, absolute paths)
+- `.../Step One Create T2Master.py` — Bloomberg raw → `T2 Master.xlsx`; contains the
+  **data-quality guard** `detect_regime_breaks_sheet()` (lines ~196, 826-977). Untested.
+- `.../Step Two Create Normalized Tidy.py` — cross-sectional z-scores (`_CS` suffix).
+- `.../Step Five FAST.py` — **the active factor engine. Despite the filename its header reads
+  "Step Five Top3 Tcost.py": Top-3 60-month momentum + hysteresis band (EXIT_BAND=2) + κ=1
+  trading-cost hurdle.** The old CVXPY/SLSQP QP optimizer is gone from this file (git history only).
+- `.../Step Six Create Country alphas from Factor alphas.py` — factor weights → country alphas.
+- `.../Step Eight Write Country Weights.py` — country weights; applies the ADV liquidity cap via
+  `step_liquidity_cap.py`. Produces the extra "next-month" vintage row downstream steps consume.
+- `.../Step Nine Calculate Portfolio Returns.py` — final portfolio returns.
+- `.../Step Fourteen Target Optimization.py` — CVXPY country optimizer, **long-only**
+  (`weights_var >= 0` strips shorts). `...LongShort.py` is the 130/30 variant.
+- `.../Step Schwab Trading.py` + `.../step_schwab_dashboard.py` — **live-money TWAP executor.**
+- `.../Run_All_Pipeline.py` — canonical step order (from scratch). `Run_Limited_Pipeline.py`
+  reruns from Step Five onward.
+- `.../Step Factor Categories.xlsx` — factor eligibility whitelist (Max>0 → the 36 Value+Quality
+  factors eligible for Step Five; Max=0 dropped; **missing factors default to 0.0, not 1.0**).
+- `.../tests/test_schwab_twap_engine.py` — 33 fake-broker safety tests (trading engine only).
+
+## Commands that work
 ```bash
-python "Step Zero Create P2P Scores.py"
-python "Step One Create T2Master.py"
-python "Step Two Create Normalized Tidy.py"
-python "Step Two Point Five Create Benchmark Rets.py"
-python "Step Three Top20 Portfolios.py"
-python "Step Four Create Monthly Top20 Returns.py"
-python "Step Four Point Five.py"
-python "Step Five 60 Month Optimal Portfolios.py"
-python "Step Five Tcost.py"
-python "Step Six Create Country alphas from Factor alphas.py"
-python "Step Six Point Five.py"
-python "Step Seven Visualize Factor Weights.py"
-python "Step Eight Write Country Weights.py"
-python "Step Nine Calculate Portfolio Returns.py"
-python "Step Ten Create Final Report.py"
-python "Step Fourteen Target Optimization.py"
-python "Step Fifteen Market Regime Analysis.py"
+python3 -m pytest tests/ -q          # 33 Schwab-engine tests — VERIFIED collect+run
+python3 "Run_All_Pipeline.py"        # full pipeline, Step Zero→FINALFINAL (see caveat below)
+python3 "Run_Limited_Pipeline.py"    # rerun Step Five→FINALFINAL (skips data rebuild)
+python3 "Step Schwab Trading.py"     # LIVE MONEY. Defaults to dry-run; read the file first.
 ```
+- Pipeline step order in `Run_All_Pipeline.py` was verified — every one of its 21 listed
+  scripts exists on disk. The end-to-end run itself was **not executed here (unverified)**;
+  it is long and rewrites all root `.xlsx`/`.pdf` outputs.
+- **Step Zero/One cannot run as-is**: their Bloomberg input `Country Bloomberg Data Master T.xlsx`
+  is **not in the repo**. A fresh full run needs that dump first (Bloomberg skill / OpusBloomberg).
+  Most work resumes from the committed `T2 Master.xlsx` via `Run_Limited_Pipeline.py`.
 
-### Archived Steps
-The following steps have been moved to Archive/ and are not part of the main flow:
-- Step Six T2 Factor Timing Top3.py
-- Step Eleven Compare Strategies.py
-- Step Twelve MultiPeriod Forecast.py
-- Step Thirteen Create Country alphas from Factor Alphas.py
-- Step Run All.py
+## Data locations (all in repo root unless noted)
+- Input (missing, must be supplied): `Country Bloomberg Data Master T.xlsx`
+- Master data: `T2 Master.xlsx`, `Normalized_T2_Master.xlsx` (+ `...CSV.csv`), `P2P_Country_Historical_Scores.xlsx`
+- Factor engine I/O: `T2_Optimizer.xlsx`, `T2_Trading_Cost.xlsx`, `T60.xlsx` → `T2_rolling_window_weights.xlsx`
+- Country outputs: `T2_Country_Alphas.xlsx`, `T2_Country_Weights.xlsx`, `T2_Final_Country_Weights.xlsx`
+- Reports/logs: `T2_Strategy_Report_Comprehensive_*.pdf`, `T2_ALL_OUTPUTS_MERGED_*.pdf`,
+  `T2_processing.log`, `T2_regime_break_log.xlsx` (data-quality forward-fills)
+- Trading audit: `outputs/schwab_trade_plan_YYYYMMDD.xlsx`, `outputs/schwab_execution_log_*.xlsx`,
+  `outputs/schwab_live_marker_*.json`
+- Liquidity data: `Experiments Deep Dive/IBKR_Liquidity.xlsx`
 
-### Testing and Development
-```bash
-# Install dependencies
-pip install -r requirements.txt
+## Conventions & gotchas (repo-specific)
+- **Value orientation is non-negotiable.** Primary metric is **annualized return** (not Sharpe),
+  turnover secondary. Improvements may add quality/rotation but may not abandon value.
+- **Diversification wins here** (36 correlated Value/Quality factors): Top-3 equal-weight beats
+  the QP. The opposite is true in the sibling `T2 Factor Timing Fuzzy` (82 heterogeneous factors,
+  concentration wins) — **do NOT port the Top-3 fix there** (~-2.6%/yr).
+- **No lookahead, ever.** All gap-filling is forward-only; no future data may propagate backward.
+- **Schwab engine parity is a standing invariant.** `Step Schwab Trading.py` and
+  `step_schwab_dashboard.py` must stay byte-for-byte identical to the sibling Momentum repo except
+  documented account-specific values (paths, `DEFAULT_ACCOUNT_NAME`, `T2_FINAL_T60_VALUE.xlsx`,
+  VTV/VBR `ETF_OVERRIDES`, account #167). Any other diff = one repo has a fix the other lacks.
+- IOC order durations are REJECTED by Schwab (HTTP 400) for these accounts — keep DAY marketable-limit.
+- Trading costs in `T2_Trading_Cost.xlsx` are PERCENT (0.07 = 7 bps); Step Five divides by 100.
+- Experiments must not modify production step scripts — put them in `Experiments Deep Dive/`.
+- `Step Three` real filename is `Step Three Top20 Portfolios Fast.py`; `Step Four` is
+  `...FAST.py`. Older command lists referencing `Step Five 60 Month Optimal Portfolios.py`,
+  `Step Five Tcost.py`, `Step Eleven/Twelve/Thirteen` are **stale** — those are archived/renamed.
+- `T60.xlsx` = trailing 60-month factor returns (no `_PRED` columns; forecast lookups fall back to
+  window mean). `T2_rolling_window_weights.xlsx` = optimized weights. They are independent.
 
-# Run Jupyter notebooks for interactive analysis
-jupyter lab
-```
+## Current state
+- **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
+  on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.
+- Done: Top-3 Tcost engine, ADV liquidity cap, hardened Schwab engine (33 tests pass), OpenWiki docs.
+- **Known-untested:** the entire research pipeline (Steps 0-21). Only the trading engine has tests.
+- **CORRECTION to prior notes:** the month-over-month regime-break detector is **implemented and
+  wired in** (`detect_regime_breaks_sheet`, writes `T2_regime_break_log.xlsx`) — earlier CLAUDE/AGENTS
+  notes calling it "proposed but not yet implemented" are stale.
 
-## Architecture
 
-### Pipeline Overview
-The T2 Factor Timing system is a sequential pipeline for momentum-based country selection and portfolio optimization:
+## Cross-session messaging
 
-1. **Data Preparation (Steps 0-2.5)**: 
-   - Ingests Bloomberg financial data and P2P scores
-   - Creates normalized data with quality enhancements (outlier detection, winsorization)
-   - Generates benchmark returns for performance comparison
-
-2. **Portfolio Construction (Steps 3-5)**:
-   - Identifies top 20 countries by momentum across multiple lookback periods
-   - Calculates monthly returns for each momentum portfolio
-   - Step Four Point Five calculates weighted-average trading cost per factor portfolio
-   - Performs 60-month rolling window optimization to find optimal factor weights
-
-3. **Country Alpha Generation (Steps 6-6.5)**:
-   - Step Six creates country alphas using ALL factors (exposure × T60 trailing returns)
-   - Step Six Point Five creates country alphas using ONLY Step Five selected factors — output: `T2_Country_Top_Alphas.xlsx`
-   - Step Six Point Five formula: `Country_Alpha = Σ I(Exposure ≠ 0) × Weight × T60` — exposure acts as binary gate only (not proportional)
-
-4. **Portfolio Implementation (Steps 7-9)**:
-   - Visualizes factor weights over time
-   - Translates factor weights to country-level allocations
-   - Calculates final portfolio returns with rebalancing
-
-5. **Reporting and Optimization (Steps 10, 14-15)**:
-   - Creates comprehensive performance reports with visualizations
-   - Optimizes country weights using CVXPY with turnover constraints
-   - Analyzes strategy performance across market regime conditions
-
-### Key Data Flow
-```
-Bloomberg Data → T2 Master → Normalized Data → Top20 Portfolios → Factor Returns → 
-Factor Weights → Country Weights → Portfolio Returns → Performance Reports → 
-Target Optimization → Market Regime Analysis
-```
-
-### Critical Implementation Details
-
-**Data Quality Pipeline**: Step One implements sophisticated data cleaning with forward-filling, local outlier detection (±3σ rolling windows), and global winsorization. Market cap data receives special handling to preserve large-cap influence.
-
-**Portfolio Optimization**: The strategy uses rolling window optimization to find optimal factor weights that maximize risk-adjusted returns. Factor weights are constrained by maximum allocation limits defined in Step Factor Categories.xlsx.
-
-**Target Optimization**: Step Fourteen implements CVXPY-based optimization that balances three objectives: maximizing portfolio alpha, minimizing drift from rolled-forward weights, and minimizing transaction costs from turnover.
-
-**Market Regime Analysis**: Step Fifteen analyzes strategy performance across different market conditions (Bull/Bear, High/Low Volatility, Economic Expansion/Contraction) and identifies which factors drive performance in each regime.
-
-### File Dependencies
-- Input data must be in Excel format with specific sheet names
-- All intermediate outputs are Excel files for compatibility
-- Visualizations saved as PDFs in outputs/visualizations/
-- Date columns must be datetime-indexed throughout the pipeline
-
-### Development and Debugging Tools
-
-**Archived Analysis Files** (in Archive/ directory):
-- `Step Six T2 Factor Timing Top3.py` - Factor timing with adaptive rotation
-- `Step Six Grid Search.ipynb` - Jupyter notebook for parameter optimization
-- `Step Run All.py` - Sequential pipeline execution script
-- Various experimental and comparison analysis files
-
-**Logging**: All scripts generate detailed logs to console and `T2_processing.log`
-
-### Data Quality and Error Handling
-- Missing country data is filled with the mean of available countries
-- Forward-filling handles temporal gaps in data
-- Outlier detection uses ±3σ rolling windows with winsorization
-- Market cap data receives special handling to preserve large-cap influence
-- All processing steps include comprehensive error handling and validation
-
-## Learned User Preferences
-
-- Best Cash Flow is Price-to-Cash-Flow (not Cash-Flow-to-Price). Higher P/CF = expensive = BAD; lower P/CF = cheap = GOOD. The `invert_norm` treatment in Step Two is correct for this variable.
-- When tracing unexpected country alpha scores, always check both the normalized data (`_CS` z-scores) and the raw Bloomberg source data to identify data quality issues upstream.
-
-## Learned Workspace Facts
-
-- NASDAQ Best Cash Flow (CCMP Index `BEST_CPS_RATIO`) has bimodal Bloomberg data errors — intermittently returns near-zero values (0.03–0.4) for months at a time (observed in 2006-2008, 2011-2016, 2021-2022, 2025-03 to 2025-08, 2026-04+).
-- Step One's outlier detection has a known gap with regime breaks: (a) bimodal distributions inflate MAD, making global winsorization bounds useless; (b) sustained bad data contaminates local rolling windows. A month-over-month percentage change detector (>80% threshold) has been proposed but not yet implemented.
-- Step Six Point Five.py was added to create country alphas using only Step Five's selected factors. It reads `T2_rolling_window_weights.xlsx`, `T60.xlsx`, and `T2_Top_20_Exposure.csv`, outputting `T2_Country_Top_Alphas.xlsx`.
-- Step Four Point Five.py calculates weighted-average trading cost per factor portfolio over time, outputting `T2_Tcost.xlsx`.
-- The `_CS` suffix on factor names means cross-sectional z-score (computed in Step Two normalization).
-- T60.xlsx contains trailing 60-month average returns per factor (produced by Step Four), not optimized weights.
-- T2_rolling_window_weights.xlsx contains optimized portfolio weights per factor (produced by Step Five) — these are independent from T60 values.
+Claude Code sessions can message each other directly. `ListAgents` (or `/list-agents`, `/peers`)
+lists reachable sessions; `SendMessage` delivers plain text to one by name. Same-machine delivery
+uses a local socket; cross-machine is reply-only via Remote Control. Use it to hand off a finding
+to a session working elsewhere instead of relaying it through the user. A message is text only —
+never conversation history or files; to share full context, resume the session instead.
