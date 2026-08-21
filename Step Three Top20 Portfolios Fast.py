@@ -390,9 +390,7 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_dir: str)
 
     skip_variables = [
         "1MRet", "3MRet", "6MRet", "9MRet", "12MRet",
-        "120MA_CS", "129MA_TS", "Agriculture_TS", "Agriculture_CS",
-        "Copper_TS", "Copper_CS", "Gold_CS", "Gold_TS",
-        "Oil_CS", "Oil_TS", "MCAP Adj_CS", "MCAP Adj_TS",
+        "120MA_CS", "120MA_TS", "MCAP Adj_CS", "MCAP Adj_TS",
         "MCAP_CS", "MCAP_TS", "PX_LAST_CS", "PX_LAST_TS",
         "Tot Return Index_CS", "Tot Return Index_TS",
         "Currency_CS", "Currency_TS", "BEST EPS_CS", "BEST EPS_TS",

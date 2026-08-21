@@ -608,6 +608,75 @@ def calculate_ma_signal(price_data: pd.DataFrame, ma_data: pd.DataFrame) -> pd.D
         logger.error(f"Error calculating MA Signal: {str(e)}")
         raise
 
+def calculate_commodity_beta_and_scaled_returns(
+    com_data: pd.DataFrame,
+    tot_ret_data: pd.DataFrame,
+    country_1m_rets: pd.DataFrame,
+    country_names: List[str],
+    window: int = 120,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Calculate country-specific trailing 10-year (120-month) univariate regression betas
+    for a commodity vs country Total Return Index, backfilling the first 10 years (window)
+    with the initial 10-year beta. Also calculates beta-scaled 12-month commodity returns.
+    
+    Args:
+        com_data (pd.DataFrame): Standardized commodity price data.
+        tot_ret_data (pd.DataFrame): Standardized country Total Return Index data.
+        country_1m_rets (pd.DataFrame): Monthly percentage returns of each country.
+        country_names (List[str]): List of country column names.
+        window (int): Rolling lookback window in months (default 120 = 10 years).
+        
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: (betas_df, scaled_12m_df)
+    """
+    try:
+        # Commodity price is in column index 1
+        com_price = pd.to_numeric(com_data.iloc[:, 1], errors='coerce').astype('float64')
+        com_1m_ret = com_price.pct_change()
+        com_12m_ret = (com_price / com_price.shift(12)) - 1
+        
+        betas_df = pd.DataFrame(index=com_data.index)
+        
+        for col in country_names[1:]:  # Skip 'Country'
+            if col in country_1m_rets.columns:
+                y = country_1m_rets[col]
+                x = com_1m_ret
+                pair = pd.DataFrame({'y': y, 'x': x})
+                
+                cov = pair['y'].rolling(window, min_periods=window).cov(pair['x'])
+                var_x = pair['x'].rolling(window, min_periods=window).var()
+                b = cov / var_x
+                
+                # Backfill initial window (< 120 months) with the first valid calculated 10Y beta
+                first_valid_idx = b.first_valid_index()
+                if first_valid_idx is not None:
+                    first_val = b.loc[first_valid_idx]
+                    b.loc[:first_valid_idx] = b.loc[:first_valid_idx].fillna(first_val)
+                
+                betas_df[col] = b.astype('float64')
+            else:
+                betas_df[col] = np.nan
+        
+        # For countries with late inception or missing data, fill with cross-sectional mean beta
+        xs_mean = betas_df.mean(axis=1)
+        betas_df = betas_df.apply(lambda col: col.fillna(xs_mean))
+        
+        # Insert Country date column
+        betas_df.insert(0, com_data.columns[0], com_data[com_data.columns[0]])
+        
+        # Calculate scaled 12M return: beta * 12M commodity return
+        scaled_12m_df = pd.DataFrame(index=com_data.index)
+        for col in country_names[1:]:
+            scaled_12m_df[col] = (betas_df[col] * com_12m_ret).astype('float64')
+        
+        scaled_12m_df.insert(0, com_data.columns[0], com_data[com_data.columns[0]])
+        
+        return betas_df, scaled_12m_df
+    except Exception as e:
+        logger.error(f"Error calculating commodity betas: {str(e)}")
+        raise
+
 def standardize_date(df: pd.DataFrame) -> pd.DataFrame:
     """Convert dates to first of next month for consistency."""
     # Check if 'Country' column contains date-like values
@@ -753,12 +822,41 @@ def process_excel_file() -> None:
             tr_12_1_spread.to_excel(writer, sheet_name='12-1MTR', index=False)
             logger.info("12-1 month trailing returns spread calculation completed")
             
+            # Compute country 1-month percentage returns for commodity beta regression
+            country_1m_rets = pd.DataFrame(index=tot_ret_data.index)
+            for col in country_names[1:]:
+                v = pd.to_numeric(tot_ret_data[col], errors='coerce').astype('float64')
+                country_1m_rets[col] = v.pct_change()
+
+            # Process Commodity sheets with 10-year rolling beta & beta-scaled 12M return
+            commodity_sheets = ['Gold', 'Copper', 'Oil', 'Agriculture']
+            for com_sheet in commodity_sheets:
+                if com_sheet in excel_file.sheet_names:
+                    logger.info(f"Calculating 10-year trailing betas and scaled 12M returns for {com_sheet}")
+                    try:
+                        sheet_data = pd.read_excel(input_file, sheet_name=com_sheet)
+                        sheet_data = sheet_data.iloc[2:].reset_index(drop=True)
+                        sheet_data.columns = country_names[:len(sheet_data.columns)]
+                        sheet_data = standardize_date(sheet_data)
+                        
+                        betas_df, scaled_12m_df = calculate_commodity_beta_and_scaled_returns(
+                            sheet_data, tot_ret_data, country_1m_rets, country_names, window=120
+                        )
+                        
+                        # Write regular commodity sheet (contains trailing 10Y betas)
+                        betas_df.to_excel(writer, sheet_name=com_sheet, index=False)
+                        
+                        # Write 12M commodity sheet (contains beta * 12M commodity return)
+                        scaled_12m_sheet_name = f"{com_sheet} 12"
+                        scaled_12m_df.to_excel(writer, sheet_name=scaled_12m_sheet_name, index=False)
+                        
+                        logger.info(f"Commodity beta and scaled 12M return completed for {com_sheet}")
+                    except Exception as e:
+                        logger.error(f"Error processing commodity betas for {com_sheet}: {str(e)}")
+                        raise
+
             # Dictionary of sheets and their change periods
             change_calculations = {
-                'Gold': 12,
-                'Copper': 12,
-                'Oil': 12,
-                'Agriculture': 12,
                 'Currency': 12,
                 '10Yr Bond': 12,
                 'Best EPS': 36,
@@ -838,6 +936,9 @@ def process_excel_file() -> None:
 
             # Process other sheets as before
             for sheet_name in sheet_names:
+                if sheet_name in commodity_sheets:
+                    # Commodity sheets (Gold, Copper, Oil, Agriculture) already processed as beta sheets
+                    continue
                 logger.info(f"Processing sheet: {sheet_name}")
                 
                 try:
