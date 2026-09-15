@@ -859,32 +859,48 @@ def process_excel_file() -> None:
             change_calculations = {
                 'Currency': 12,
                 '10Yr Bond': 12,
-                'Best EPS': 36,
+                'BEST EPS': 36,
                 'Trailing EPS': 36
             }
-            
+
+            # Bloomberg sheet names are capitalised inconsistently ('BEST EPS' vs
+            # 'Trailing EPS'), so resolve every configured key to the workbook's
+            # actual sheet name case-insensitively.  A configured sheet that is
+            # genuinely absent is now a hard error: previously the `in` check
+            # silently skipped it, which hid a casing mismatch and meant the
+            # 36-month BEST EPS change was never built.
+            actual_sheet_names = {
+                name.strip().casefold(): name for name in excel_file.sheet_names
+            }
+
             # Process sheets that need change calculations
-            for sheet_name, months in change_calculations.items():
-                if sheet_name in excel_file.sheet_names:
-                    logger.info(f"Calculating {months}-month change for {sheet_name}")
-                    try:
-                        # Load data
-                        sheet_data = pd.read_excel(input_file, sheet_name=sheet_name)
-                        sheet_data = sheet_data.iloc[2:].reset_index(drop=True)
-                        sheet_data.columns = country_names[:len(sheet_data.columns)]
-                        sheet_data = standardize_date(sheet_data)  # Standardize dates
-                        
-                        # Calculate change
-                        if sheet_name == '10Yr Bond':
-                            changes = calculate_change(sheet_data, months, is_absolute=True)
-                        else:
-                            changes = calculate_change(sheet_data, months)
-                        new_sheet_name = f"{sheet_name} {months}"
-                        changes.to_excel(writer, sheet_name=new_sheet_name, index=False)
-                        logger.info(f"{months}-month change calculation completed for {sheet_name}")
-                    except Exception as e:
-                        logger.error(f"Error processing {months}-month change for {sheet_name}: {str(e)}")
-                        raise
+            for configured_name, months in change_calculations.items():
+                actual_name = actual_sheet_names.get(configured_name.strip().casefold())
+                if actual_name is None:
+                    raise KeyError(
+                        f"Sheet '{configured_name}' in change_calculations is not "
+                        f"present in {input_file}. Available sheets: "
+                        f"{sorted(excel_file.sheet_names)}"
+                    )
+                logger.info(f"Calculating {months}-month change for {actual_name}")
+                try:
+                    # Load data
+                    sheet_data = pd.read_excel(input_file, sheet_name=actual_name)
+                    sheet_data = sheet_data.iloc[2:].reset_index(drop=True)
+                    sheet_data.columns = country_names[:len(sheet_data.columns)]
+                    sheet_data = standardize_date(sheet_data)  # Standardize dates
+
+                    # Calculate change
+                    if actual_name == '10Yr Bond':
+                        changes = calculate_change(sheet_data, months, is_absolute=True)
+                    else:
+                        changes = calculate_change(sheet_data, months)
+                    new_sheet_name = f"{actual_name} {months}"
+                    changes.to_excel(writer, sheet_name=new_sheet_name, index=False)
+                    logger.info(f"{months}-month change calculation completed for {actual_name}")
+                except Exception as e:
+                    logger.error(f"Error processing {months}-month change for {actual_name}: {str(e)}")
+                    raise
             
             # Process sheets for MA signals
             sheets_for_ma = ['PX_LAST']
