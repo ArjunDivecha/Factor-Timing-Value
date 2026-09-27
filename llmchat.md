@@ -198,3 +198,11 @@ persistence still not implemented).
 ---
 SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
 ---
+
+---
+## 2026-09-27 — Breadth exposure dial tested on Value (Claude Code, from the T2 session)
+- The work lives in the T2 repo: `../T2 Factor Timing Fuzzy/Experiments Deep Dive/Regime Breadth Overlay/` (`rbo_value.py`, run `runs/20260927_112528_value/`, `FINDINGS.md`). Nothing in this repo was modified except this entry.
+- Rules were fixed on T2 (Momentum) and applied to Value UNTUNED. Value's daily returns were rebuilt from `T2_Final_Country_Weights.xlsx` and match `T2_Final_Portfolio_Returns.xlsx` (median error 3e-9; 8 US-holiday month-ends >10bp).
+- The dial **exposure = 50% + share of the 34 above their 200d EMA** (month-end, 50–150%, borrowing at Arjun's 4.5% margin rate) makes 13.7%/yr vs 11.1% for Value at 100%, Sharpe 0.72 vs 0.59, maxDD −50% vs −62%. The 150/50 switch makes 13.9%/0.70/−53% and fails in 2020–22. Constant 150% makes 14.5% with a −78% maxDD.
+- It is beta timing, not Value's edge: active IR is unchanged (0.57 vs 0.59). Same conclusion as T2. Not deployed; no production change.
+- IL entry: `../Investment Learnings/T2 Factor Timing Fuzzy Regime Breadth Overlay.md`.
