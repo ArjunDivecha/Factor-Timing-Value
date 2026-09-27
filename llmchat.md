@@ -206,3 +206,4 @@ SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
 - The dial **exposure = 50% + share of the 34 above their 200d EMA** (month-end, 50–150%, borrowing at Arjun's 4.5% margin rate) makes 13.7%/yr vs 11.1% for Value at 100%, Sharpe 0.72 vs 0.59, maxDD −50% vs −62%. The 150/50 switch makes 13.9%/0.70/−53% and fails in 2020–22. Constant 150% makes 14.5% with a −78% maxDD.
 - It is beta timing, not Value's edge: active IR is unchanged (0.57 vs 0.59). Same conclusion as T2. Not deployed; no production change.
 - IL entry: `../Investment Learnings/T2 Factor Timing Fuzzy Regime Breadth Overlay.md`.
+- 2026-09-27 follow-up (portfolio margin, `rbo_margin.py` in the T2 repo, run `runs/20260927_120053_margin/`): the breadth dial 0–200% on Value makes 15.5%/yr vs 11.1%, maxDD −41% vs −62%, peak leverage 2.2×. The 0–300% dial makes 21.3% with a −56% maxDD. Recommended ceiling: 0–2. Not deployed.
