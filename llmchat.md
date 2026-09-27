@@ -207,3 +207,7 @@ SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
 - It is beta timing, not Value's edge: active IR is unchanged (0.57 vs 0.59). Same conclusion as T2. Not deployed; no production change.
 - IL entry: `../Investment Learnings/T2 Factor Timing Fuzzy Regime Breadth Overlay.md`.
 - 2026-09-27 follow-up (portfolio margin, `rbo_margin.py` in the T2 repo, run `runs/20260927_120053_margin/`): the breadth dial 0–200% on Value makes 15.5%/yr vs 11.1%, maxDD −41% vs −62%, peak leverage 2.2×. The 0–300% dial makes 21.3% with a −56% maxDD. Recommended ceiling: 0–2. Not deployed.
+- 2026-09-27 (futures/ETF hedge implementation, `rbo_futures.py` in the T2 repo, run `runs/20260927_120530_futures/`):
+  - Value correlates 0.94 with an ACWI-like index, so hedge it with ACWI rather than ex-US.
+  - The best Value variant is still resizing ETFs 0..2 (17.2%/0.80/−41% vs hold 12.4%/0.67/−62%, 2003-10+). The futures overlay 0..2 on ACWI-like gives 15.7%/0.76/−43%.
+  - Net shorts add little for Value.
