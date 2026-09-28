@@ -211,3 +211,4 @@ SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
   - Value correlates 0.94 with an ACWI-like index, so hedge it with ACWI rather than ex-US.
   - The best Value variant is still resizing ETFs 0..2 (17.2%/0.80/−41% vs hold 12.4%/0.67/−62%, 2003-10+). The futures overlay 0..2 on ACWI-like gives 15.7%/0.76/−43%.
   - Net shorts add little for Value.
+- 2026-09-27 actual-book hedge (T2 repo `rbo_hedge_accounts.py` / `rbo_value_us_leg.py`): account 12790167 ($8.92M, 32% VTV). Out-of-sample, IEFA+IEMG, VEU and a holdings-based IVE+IEFA+IEMG hedge all remove about 87% of variance; ACWI removes 74%. If the Oct preview dial of 79% holds: short IVE ~$0.56M, IEFA ~$0.68M, IEMG ~$0.67M.
