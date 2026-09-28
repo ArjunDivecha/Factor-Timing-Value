@@ -67,7 +67,6 @@ def main():
         "Step Eight Write Country Weights.py",
         "Step Eight Point Five Write Country Weights US Adjustment.py",
         "Step Nine Calculate Portfolio Returns.py",
-        "Step Ten Create Final Report.py",
         "Step Fourteen Target Optimization.py",
         "Step Fifteen Market Regime Analysis.py",
         "Step Sixteen Market Regime Analysis.py",
@@ -75,7 +74,8 @@ def main():
         "Step Eighteen Asset Class Charts.py",
         "Step Twenty PORCH.py",
         "Step Twenty One Master Report.py",
-        "Step FINALFINAL.py"
+        "Step FINALFINAL.py",
+        "Step Ten Exposure Dial.py"  # breadth exposure dial; must run after FINALFINAL
     ]
     
     print(f"Starting T2 Factor Timing Pipeline Execution")
