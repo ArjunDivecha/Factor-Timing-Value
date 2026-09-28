@@ -32,10 +32,13 @@ The main sequence is reflected in `Run_All_Pipeline.py` and the command list in 
 19. `Step Twenty One Master Report.py`
 20. `Step FINALFINAL.py`
 21. `Step Ten Exposure Dial.py` — runs LAST, after `Step FINALFINAL.py`. Replaces the old
-    `Step Ten Create Final Report.py` (a PDF report generator), which is deleted. Computes
-    breadth (share of 34 country indices above their 200-day EMA at the last completed
-    month-end) from the daily Bloomberg file, sets `target_exposure = clip(2 x breadth, 0, 2)`,
-    and writes `Exposure_Dial` + `Exposure_Detail` sheets into `T2_FINAL_T60_VALUE.xlsx`.
+    `Step Ten Create Final Report.py` (a PDF report generator), which is deleted. Downloads
+    dividend-adjusted daily closes for the 34 country ETFs from Yahoo Finance via `yfinance`
+    at run time (no longer reads the daily Bloomberg file), computes breadth (share of the 34
+    ETFs above their 200-day EMA at the last completed month-end), sets
+    `target_exposure = clip(2 x breadth, 0, 2)`, writes `Exposure_Dial` + `Exposure_Detail`
+    sheets into `T2_FINAL_T60_VALUE.xlsx`, and saves the prices used to
+    `outputs/exposure_dial_prices_YYYYMMDD.parquet`.
 
 `Run_Limited_Pipeline.py` is a shorter runner for later-stage reruns.
 

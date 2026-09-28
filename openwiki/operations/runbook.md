@@ -85,7 +85,9 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 - `outputs/schwab_live_marker_*.json`
 
 ## Monthly operating procedure
-1. Refresh the monthly **and** daily Bloomberg master files through month-end.
+1. Refresh the monthly Bloomberg master file through month-end. Step Ten Exposure Dial no
+   longer needs the daily Bloomberg file — it downloads its own daily ETF prices from Yahoo
+   Finance at run time.
 2. Run the pipeline (`Run_All_Pipeline.py` or `Run_Limited_Pipeline.py`) — `Step Ten Exposure
    Dial.py` runs last.
 3. Dry-run the trader in dial mode and review the plan (target exposure, buying power, largest orders).
