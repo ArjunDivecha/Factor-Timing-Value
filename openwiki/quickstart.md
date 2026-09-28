@@ -24,9 +24,11 @@ This repository is a factor-timing and country-allocation research pipeline with
 ## Main entrypoints
 - `Run_All_Pipeline.py` — runs the core pipeline scripts in order.
 - `Run_Limited_Pipeline.py` — partial pipeline runner for later-stage reruns.
-- `Step Zero Create P2P Scores.py` through `Step Ten Create Final Report.py` — core research chain.
+- `Step Zero Create P2P Scores.py` through `Step FINALFINAL.py` — core research chain, followed
+  by `Step Ten Exposure Dial.py` which runs LAST (replaces the deleted `Step Ten Create Final
+  Report.py`).
 - `Step Fourteen Target Optimization.py` and `Step Fourteen Target Optimization LongShort.py` — country optimization variants.
-- `Step Schwab Trading.py` — live/dry-run Schwab execution engine.
+- `Step Schwab Trading.py` (`--exposure-mode {dial,off}`, default `dial`) — live/dry-run Schwab execution engine.
 - `tests/test_schwab_twap_engine.py` — safety and regression tests for the trading engine.
 
 ## Repository shape

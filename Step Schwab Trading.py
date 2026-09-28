@@ -20,10 +20,23 @@ DESCRIPTION:
     but does NOT submit orders. Pass --live --confirm-live to actually
     trade.
 
+    EXPOSURE DIAL (added 2026-09-27): --exposure-mode {dial,off}, default
+    `dial`. In `dial` mode the country-ETF book is scaled to
+    target_exposure x the allocatable base (0% .. MAX_EXPOSURE=200% of
+    account value), where target_exposure is read from the Exposure_Dial
+    sheet that `Step Ten Exposure Dial.py` writes into the target
+    workbook. `off` reproduces the pre-dial trader exactly (exposure 1.0,
+    Exposure_Dial never read) and is the escape hatch for a standard live
+    rebalance. Long-only: exposure above 1.0 is funded with margin buying
+    power, never with short sales. See "EXPOSURE DIAL" in NOTES below.
+
 INPUT FILES:
     /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_FINAL_T60_VALUE.xlsx
         Target country weights (sheet: Latest_Country_Alpha_Weights).
         Columns: Country, Country Alpha, Country Weight.
+        Exposure dial (sheet: Exposure_Dial, columns Key/Value; read only in
+        --exposure-mode dial). Keys used: target_exposure, breadth,
+        asof_date, computed_at (all required).
     /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/AssetList.xlsx
         Country-to-ETF-ticker mapping (sheet: Yahoo). Row order matches
         the country order in T2 Master.xlsx.
@@ -36,14 +49,18 @@ INPUT FILES:
 
 OUTPUT FILES:
     /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/outputs/schwab_trade_plan_YYYYMMDD.xlsx
-        Audit workbook with the trade plan, summary, and target weights.
+        Audit workbook with the trade plan, summary, target weights, and an
+        Exposure sheet (exposure_mode, target_exposure, breadth, asof_date,
+        computed_at).
     /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/outputs/schwab_execution_log_YYYYMMDD.xlsx
-        Per-slice execution log with TCA (Transaction Cost Analysis).
+        Per-slice execution log with TCA (Transaction Cost Analysis), plus a
+        Run Info sheet carrying the same exposure audit fields.
     /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/outputs/schwab_live_marker_YYYYMMDD.json
-        JSON marker preventing duplicate live runs on the same date.
+        JSON marker preventing duplicate live runs on the same date (also
+        records the exposure audit fields).
 
-VERSION: 2.0
-LAST UPDATED: 2026-06-30
+VERSION: 2.1
+LAST UPDATED: 2026-09-27
 AUTHOR: Arjun Divecha
 
 DEPENDENCIES:
@@ -58,6 +75,47 @@ USAGE:
     python "Step Schwab Trading.py" --twap-window 30 --twap-slices 20
     python "Step Schwab Trading.py" --live --confirm-live --force-rerun  # recover
         # after a crash; only proceeds if Schwab confirms no open orders remain.
+    python "Step Schwab Trading.py" --exposure-mode off          # dry run, dial ignored
+    python "Step Schwab Trading.py" --live --confirm-live --exposure-mode off
+        # standard (100%) live rebalance while EXPOSURE_DIAL_LIVE_APPROVED is False
+
+NOTES (2026-09-27 EXPOSURE DIAL — spec: Experiments Deep Dive/Regime Breadth
+Overlay/TRADER_EXPOSURE_SPEC.md; research: .../FINDINGS.md):
+    - Constants: MAX_EXPOSURE = 2.0, DIAL_MAX_AGE_DAYS = 40,
+      BUYING_POWER_RESERVE_PCT = 0.03, LEVERAGE_GUARD_SLACK_PCT = 0.05,
+      EXPOSURE_DIAL_LIVE_APPROVED = False, BUYING_POWER_FIELD = "buyingPower".
+    - Dial validation is a HARD error in dry runs too (no fallback to 1.0):
+      missing sheet/keys, target_exposure not a finite number in
+      [0, MAX_EXPOSURE], asof_date more than DIAL_MAX_AGE_DAYS old or in the
+      future, computed_at older than --max-target-weights-age-days (or in
+      the future).
+    - Live gate: --live --confirm-live in dial mode refuses to start while
+      EXPOSURE_DIAL_LIVE_APPROVED is False (checked before Schwab is even
+      contacted, so before any order or live marker).
+    - Sizing: target dollars = weight x allocatable x exposure, where
+      allocatable = liquidationValue x (1 - cash buffer) - SNAXX (unchanged).
+      Exposure 0 sells the whole country book via the zero-target path.
+    - Liquidity cap AUM = liquidationValue x exposure (dollars actually
+      deployed); the cap is skipped entirely at exposure 0.
+    - Exposure > 1 requires a MARGIN account (hard error otherwise) and
+      Schwab's currentBalances.buyingPower (hard error if absent — never a
+      silent fallback to cash). Post-sell buys are scaled to buyingPower
+      minus 3% of liquidationValue. Exposure <= 1 keeps the cashBalance
+      logic unchanged.
+    - Leverage guard (dial mode, whenever buys remain): post-sell country-ETF
+      market value (ex-SNAXX) + planned buys must be <= (exposure +
+      LEVERAGE_GUARD_SLACK_PCT) x liquidationValue — an ABSOLUTE 5%-of-account
+      slack, so it doesn't shrink at low exposure and a sub-5% unfilled-sell
+      residue can't trip it — and ALL long market value + planned buys must
+      be <= MAX_EXPOSURE x liquidationValue (hard ceiling, no slack). liquidationValue here is the
+      smaller of the pre-trade and post-sell values. A trip aborts the buy
+      phase (MANUAL_REQUIRED) via the existing abort path.
+    - Exposure > 1 with spendable buying power (buyingPower - reserve) <= 0,
+      or so little that every BUY floors to zero shares, also aborts the buy
+      phase (MANUAL_REQUIRED) instead of "completing" with no buys. Any
+      buying-power scale-down is persisted to the live marker and the
+      execution log's Run Info sheet (and notified), not just printed.
+    - No short selling: no SELL_SHORT / BUY_TO_COVER instructions exist.
 
 NOTES (2026-06-30 vetting pass — GPT + GLM audits):
     - place_order returning HTTP 201 with no Location header (schwabdev's
@@ -190,6 +248,26 @@ DEFAULT_MAX_TARGET_WEIGHTS_AGE_DAYS = 35.0
 # Schwab API balance fields — use cashBalance for actual cash (NOT margin buying power)
 CASH_BALANCE_FIELD = "cashBalance"
 TOTAL_EQUITY_FIELD = "liquidationValue"
+# Margin buying power (securitiesAccount.currentBalances.buyingPower on a
+# MARGIN account). Read ONLY when the exposure dial asks for more than 100%.
+BUYING_POWER_FIELD = "buyingPower"
+
+# ---------------------------------------------------------------------------
+# Exposure dial (see NOTES 2026-09-27 in the module docstring)
+# ---------------------------------------------------------------------------
+EXPOSURE_DIAL_SHEET = "Exposure_Dial"
+EXPOSURE_DIAL_REQUIRED_KEYS = ("target_exposure", "breadth", "asof_date", "computed_at")
+MAX_EXPOSURE = 2.0
+DIAL_MAX_AGE_DAYS = 40
+BUYING_POWER_RESERVE_PCT = 0.03
+# Absolute slack for the leverage guard's country-book limit, as a share of
+# liquidationValue (NOT a multiple of exposure, which would shrink at low
+# exposure and trip on an ordinary sub-5% unfilled-sell residue).
+LEVERAGE_GUARD_SLACK_PCT = 0.05
+# Flip to True only after reviewing a dial-mode dry run. While False, a live
+# run in dial mode refuses to start; use --exposure-mode off for a standard
+# live rebalance.
+EXPOSURE_DIAL_LIVE_APPROVED = False
 
 DEFAULT_IMESSAGE_RECIPIENT = "+15104212111"
 
@@ -233,6 +311,7 @@ class RunConfig:
     max_slice_carry_multiple: float
     max_target_weights_age_days: float
     force_rerun: bool
+    exposure_mode: str
 
 
 # ============================================================================
@@ -328,6 +407,149 @@ def check_target_weights_staleness(max_age_days: float, is_live: bool) -> float:
     else:
         print(f"  Target weights file age: {age_days:.1f} days (OK, limit {max_age_days:.0f})")
     return age_days
+
+
+def check_exposure_live_gate(exposure_mode: str, is_live: bool) -> None:
+    """Refuse a LIVE run in dial mode until the dial has been approved.
+
+    Called before Schwab is contacted, so it fires before any order and
+    before the live marker is claimed. Dry runs in dial mode always pass.
+    """
+    if is_live and exposure_mode == "dial" and not EXPOSURE_DIAL_LIVE_APPROVED:
+        raise TradingError(
+            "EXPOSURE DIAL NOT APPROVED FOR LIVE TRADING: --exposure-mode dial with "
+            "--live --confirm-live is blocked while EXPOSURE_DIAL_LIVE_APPROVED is "
+            "False. For a standard (100%) live rebalance, rerun with "
+            "--exposure-mode off. To trade the dial live, review a dial-mode dry run "
+            "first, then set EXPOSURE_DIAL_LIVE_APPROVED = True in this script."
+        )
+
+
+def _parse_dial_datetime(value: Any, key: str) -> datetime:
+    """Parse an Exposure_Dial date/timestamp cell into a naive datetime."""
+    if isinstance(value, pd.Timestamp):
+        value = value.to_pydatetime()
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip())
+        except ValueError as exc:
+            raise TradingError(f"EXPOSURE DIAL: '{key}' = {value!r} is not an ISO date/timestamp.") from exc
+    else:
+        raise TradingError(f"EXPOSURE DIAL: '{key}' = {value!r} is not an ISO date/timestamp.")
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def load_exposure_dial(
+    max_computed_age_days: float,
+    path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Read and validate the Exposure_Dial sheet from the target workbook.
+
+    Every problem is a hard TradingError — in dry runs too — with NO
+    fallback to exposure 1.0: a dial that can't be trusted must stop the
+    run, not silently become a 100% rebalance. (--exposure-mode off is the
+    explicit way to trade without the dial.)
+
+    Returns {target_exposure, breadth, asof_date (YYYY-MM-DD), computed_at
+    (ISO), plus every other key the sheet carries, as raw values}.
+    """
+    path = path or T2_FINAL_PATH
+    now = now or datetime.now()
+    try:
+        df = pd.read_excel(path, sheet_name=EXPOSURE_DIAL_SHEET)
+    except ValueError as exc:
+        # pandas raises ValueError("Worksheet named ... not found") for a missing sheet
+        raise TradingError(
+            f"EXPOSURE DIAL: sheet '{EXPOSURE_DIAL_SHEET}' not found in {path.name} ({exc}). "
+            "Run 'Step Ten Exposure Dial.py' after Step FINALFINAL, or trade with "
+            "--exposure-mode off."
+        ) from exc
+    if "Key" not in df.columns or "Value" not in df.columns:
+        raise TradingError(
+            f"EXPOSURE DIAL: sheet '{EXPOSURE_DIAL_SHEET}' must have columns Key, Value; "
+            f"found {list(df.columns)}."
+        )
+    keys = df["Key"].astype(str).str.strip()
+    dupes = sorted(set(keys[keys.duplicated()]))
+    if dupes:
+        raise TradingError(f"EXPOSURE DIAL: duplicate keys {dupes} in '{EXPOSURE_DIAL_SHEET}'.")
+    raw = dict(zip(keys, df["Value"]))
+    missing = [k for k in EXPOSURE_DIAL_REQUIRED_KEYS if k not in raw or pd.isna(raw[k])]
+    if missing:
+        raise TradingError(f"EXPOSURE DIAL: required key(s) {missing} missing or blank in '{EXPOSURE_DIAL_SHEET}'.")
+
+    exp_raw = raw["target_exposure"]
+    if isinstance(exp_raw, (bool, np.bool_)) or not isinstance(exp_raw, (int, float, np.integer, np.floating)):
+        raise TradingError(f"EXPOSURE DIAL: target_exposure = {exp_raw!r} is not a number.")
+    exposure = float(exp_raw)
+    if not math.isfinite(exposure) or exposure < 0.0 or exposure > MAX_EXPOSURE:
+        raise TradingError(
+            f"EXPOSURE DIAL: target_exposure = {exposure!r} is outside [0, {MAX_EXPOSURE}]."
+        )
+
+    asof = _parse_dial_datetime(raw["asof_date"], "asof_date").date()
+    asof_age = (now.date() - asof).days
+    if asof_age < 0:
+        raise TradingError(f"EXPOSURE DIAL: asof_date {asof} is later than today ({now.date()}).")
+    if asof_age > DIAL_MAX_AGE_DAYS:
+        raise TradingError(
+            f"EXPOSURE DIAL: asof_date {asof} is {asof_age} days old "
+            f"(limit {DIAL_MAX_AGE_DAYS}). Rerun 'Step Ten Exposure Dial.py'."
+        )
+
+    computed_at = _parse_dial_datetime(raw["computed_at"], "computed_at")
+    computed_age_days = (now - computed_at).total_seconds() / 86400.0
+    if computed_age_days < -5.0 / 1440.0:  # >5 min in the future: clock or file is wrong
+        raise TradingError(f"EXPOSURE DIAL: computed_at {computed_at.isoformat()} is in the future.")
+    if computed_age_days > max_computed_age_days:
+        raise TradingError(
+            f"EXPOSURE DIAL: computed_at {computed_at.isoformat()} is {computed_age_days:.1f} days "
+            f"old (limit {max_computed_age_days:.0f}). Rerun 'Step Ten Exposure Dial.py'."
+        )
+
+    breadth_raw = raw["breadth"]
+    try:
+        breadth = float(breadth_raw)
+    except (TypeError, ValueError) as exc:
+        raise TradingError(f"EXPOSURE DIAL: breadth = {breadth_raw!r} is not a number.") from exc
+
+    dial = {k: (v.item() if isinstance(v, np.generic) else v) for k, v in raw.items()}
+    dial.update({
+        "target_exposure": exposure,
+        "breadth": breadth,
+        "asof_date": asof.isoformat(),
+        "computed_at": computed_at.isoformat(),
+    })
+    return dial
+
+
+def build_exposure_info(config: RunConfig) -> dict[str, Any]:
+    """Resolve the run's exposure. `off` never touches the Exposure_Dial sheet.
+
+    Returns the audit dict recorded in the trade plan, execution log and
+    live marker: exposure_mode, target_exposure, breadth, asof_date,
+    computed_at.
+    """
+    if config.exposure_mode == "off":
+        return {
+            "exposure_mode": "off", "target_exposure": 1.0,
+            "breadth": None, "asof_date": None, "computed_at": None,
+        }
+    if config.exposure_mode != "dial":
+        raise TradingError(f"Unknown exposure mode '{config.exposure_mode}' (expected dial or off).")
+    dial = load_exposure_dial(config.max_target_weights_age_days)
+    return {
+        "exposure_mode": "dial",
+        "target_exposure": dial["target_exposure"],
+        "breadth": dial["breadth"],
+        "asof_date": dial["asof_date"],
+        "computed_at": dial["computed_at"],
+    }
 
 
 def check_market_hours(twap_window_minutes: float, is_live: bool, now: datetime | None = None) -> str:
@@ -514,17 +736,28 @@ def get_account_details(client: Any, account_hash: str) -> dict[str, Any]:
     return client.account_details(account_hash, fields="positions").json()
 
 
-def check_margin_account(account_details: dict[str, Any]) -> str:
+def check_margin_account(account_details: dict[str, Any], exposure: float = 1.0) -> str:
     """Warn (non-blocking) if the account is not margin-enabled.
 
     The sell->buy TWAP flow only waits 5 seconds for "settlement" before
     sizing buys off freshly-fetched cash. That is fine for a margin account
     (Schwab grants near-instant buying power from sale proceeds), but a
     cash/IRA account may not show the proceeds as usable buying power that
-    quickly (T+1 settlement), which would cause buy rejections. This never
-    blocks the run — it just makes the risk visible up front.
+    quickly (T+1 settlement), which would cause buy rejections. For
+    exposure <= 1 this never blocks the run — it just makes the risk
+    visible up front.
+
+    exposure > 1 (exposure dial) needs margin borrowing, so anything other
+    than a confirmed MARGIN account (including a missing type) raises
+    TradingError.
     """
     acct_type = str(account_details.get("securitiesAccount", {}).get("type", "")).upper()
+    if exposure > 1.0 and acct_type != "MARGIN":
+        raise TradingError(
+            f"EXPOSURE DIAL: target exposure {exposure:.2f} (> 1.0) needs a MARGIN account, "
+            f"but the account type is '{acct_type or 'UNKNOWN'}'. Refusing to lever a "
+            "non-margin account. Use --exposure-mode off for a standard rebalance."
+        )
     if acct_type and acct_type != "MARGIN":
         print(
             f"  WARNING: account type is '{acct_type}', not MARGIN. Sell proceeds may "
@@ -566,6 +799,24 @@ def parse_holdings(account_details: dict[str, Any]) -> tuple[pd.DataFrame, float
     holdings = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Symbol", "Market Value", "Long Quantity"])
 
     return holdings, cash, total_equity
+
+
+def parse_buying_power(account_details: dict[str, Any]) -> float | None:
+    """Return Schwab's margin buying power (currentBalances.buyingPower), or
+    None if the field is absent/blank/non-numeric.
+
+    Only used when the exposure dial asks for > 100%. Callers must treat
+    None as a hard stop — never substitute cashBalance for it.
+    """
+    balances = account_details.get("securitiesAccount", {}).get("currentBalances", {}) or {}
+    value = balances.get(BUYING_POWER_FIELD)
+    if value is None:
+        return None
+    try:
+        bp = float(value)
+    except (TypeError, ValueError):
+        return None
+    return bp if math.isfinite(bp) else None
 
 
 # ============================================================================
@@ -704,8 +955,14 @@ def build_trade_plan(
     total_equity: float,
     reference_prices: pd.Series,
     config: RunConfig,
+    exposure: float = 1.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Calculate integer-share trades to rebalance from current to target.
+
+    `exposure` (exposure dial) scales the country book: target dollars =
+    weight x allocatable x exposure. 1.0 reproduces the pre-dial plan
+    exactly; 0.0 makes every target zero, so the zero-target path sells
+    the whole country book (SNAXX is untouched either way).
 
     Returns (plan_df, summary_df).
     """
@@ -754,7 +1011,7 @@ def build_trade_plan(
         if not np.isfinite(price) or price <= 0:
             continue
         target_w = float(target_weights.get(etf, 0.0))
-        target_dollars = allocatable * target_w
+        target_dollars = allocatable * target_w * exposure
         target_qty = math.floor(target_dollars / price)
         current = float(current_qty.get(etf, 0.0))
         shares_to_trade = target_qty - current
@@ -789,6 +1046,8 @@ def build_trade_plan(
         {"Metric": "Cash Buffer (3%)", "Value": f"${cash_buffer:,.2f}"},
         {"Metric": "SNAXX Value (excluded from allocatable -- never sold)", "Value": f"${snaxx_value:,.2f}"},
         {"Metric": "Allocatable Equity", "Value": f"${allocatable:,.2f}"},
+        {"Metric": "Target Exposure (x allocatable)", "Value": f"{exposure:.4f}"},
+        {"Metric": "Country Book Target (allocatable x exposure)", "Value": f"${allocatable * exposure:,.2f}"},
         {"Metric": "Gross Buy Dollars", "Value": f"${gross_buy:,.2f}"},
         {"Metric": "Gross Sell Dollars", "Value": f"${gross_sell:,.2f}"},
         {"Metric": "Net Trade Dollars", "Value": f"${float(plan['Trade Dollars'].sum()):,.2f}"},
@@ -847,7 +1106,15 @@ def scale_buy_plan_to_cash(
     print(f"  WARNING: live cash (${spendable:,.2f} spendable) insufficient for "
           f"planned buys (${planned_buy_dollars:,.2f}). Scaling buy orders by {scale:.1%}.")
 
-    for idx in buy_rows.index:
+    _scale_buy_rows_in_place(plan, buy_rows.index, scale, reference_prices)
+    return plan
+
+
+def _scale_buy_rows_in_place(
+    plan: pd.DataFrame, buy_index: pd.Index, scale: float, reference_prices: pd.Series,
+) -> None:
+    """Floor each BUY row's share count by `scale` and reprice its dollars."""
+    for idx in buy_index:
         symbol = plan.at[idx, "Symbol"]
         price = float(reference_prices.get(symbol, np.nan))
         if not np.isfinite(price) or price <= 0:
@@ -857,7 +1124,100 @@ def scale_buy_plan_to_cash(
         plan.at[idx, "Shares to Trade"] = new_qty
         plan.at[idx, "Trade Dollars"] = new_qty * price
 
+
+def margin_spendable(
+    buying_power: float, liquidation_value: float, reserve_pct: float = BUYING_POWER_RESERVE_PCT,
+) -> float:
+    """Margin dollars available for buys: buyingPower minus a reserve of
+    `reserve_pct` x liquidationValue, floored at zero."""
+    return max(0.0, buying_power - liquidation_value * reserve_pct)
+
+
+def scale_buy_plan_to_buying_power(
+    plan: pd.DataFrame,
+    buying_power: float,
+    liquidation_value: float,
+    reference_prices: pd.Series,
+    reserve_pct: float = BUYING_POWER_RESERVE_PCT,
+) -> pd.DataFrame:
+    """Exposure > 1 counterpart of scale_buy_plan_to_cash: scale BUY rows
+    so planned buy dollars never exceed Schwab's margin buying power minus
+    a reserve of `reserve_pct` x liquidationValue.
+
+    Called AFTER the sell leg with a freshly re-fetched buyingPower. Only
+    used when the exposure dial is above 1.0 — at or below 1.0 the
+    cashBalance-based scale_buy_plan_to_cash path is used unchanged.
+    SELL and HOLD rows pass through unchanged. Returns a new DataFrame.
+    """
+    plan = plan.copy()
+    buy_rows = plan[plan["Action"] == "BUY"]
+    if buy_rows.empty:
+        return plan
+
+    planned_buy_dollars = float(buy_rows["Trade Dollars"].sum())
+    reserve = liquidation_value * reserve_pct
+    spendable = margin_spendable(buying_power, liquidation_value, reserve_pct)
+
+    if planned_buy_dollars <= 0 or planned_buy_dollars <= spendable:
+        return plan
+
+    scale = spendable / planned_buy_dollars
+    print(f"  WARNING: margin buying power (${spendable:,.2f} spendable after a "
+          f"${reserve:,.2f} reserve) insufficient for planned buys "
+          f"(${planned_buy_dollars:,.2f}). Scaling buy orders by {scale:.1%}.")
+    _scale_buy_rows_in_place(plan, buy_rows.index, scale, reference_prices)
     return plan
+
+
+def check_leverage_guard(
+    buy_plan: pd.DataFrame,
+    post_sell_holdings: pd.DataFrame,
+    liquidation_value: float,
+    exposure: float,
+) -> str | None:
+    """Pre-buy leverage guard for the exposure dial.
+
+    Projected long market value = post-sell holdings + planned buys. Two
+    limits must hold:
+      - country book (every holding except SNAXX, which is a cash
+        equivalent excluded from the dial's sizing base) + buys
+        <= (exposure + LEVERAGE_GUARD_SLACK_PCT) x liquidation_value
+      - ALL long market value + buys <= MAX_EXPOSURE x liquidation_value
+
+    Returns None when both hold, otherwise the human-readable reason (the
+    caller aborts the buy phase with it).
+    """
+    buys = buy_plan[buy_plan["Action"] == "BUY"]
+    planned_buys = float(buys["Trade Dollars"].clip(lower=0.0).sum()) if not buys.empty else 0.0
+    if post_sell_holdings.empty:
+        total_mv = country_mv = 0.0
+    else:
+        syms = post_sell_holdings["Symbol"].astype(str).str.upper()
+        mv = post_sell_holdings["Market Value"].astype(float)
+        total_mv = float(mv.clip(lower=0.0).sum())
+        country_mv = float(mv[syms != SNAXX_SYMBOL].clip(lower=0.0).sum())
+
+    projected_country = country_mv + planned_buys
+    projected_total = total_mv + planned_buys
+    country_limit = (exposure + LEVERAGE_GUARD_SLACK_PCT) * liquidation_value
+    total_limit = MAX_EXPOSURE * liquidation_value
+
+    problems = []
+    if projected_country > country_limit:
+        problems.append(
+            f"projected country book ${projected_country:,.0f} (post-sell ${country_mv:,.0f} "
+            f"+ buys ${planned_buys:,.0f}) exceeds (exposure {exposure:.2f} + "
+            f"slack {LEVERAGE_GUARD_SLACK_PCT:.2f}) x liquidationValue "
+            f"${liquidation_value:,.0f} = ${country_limit:,.0f}"
+        )
+    if projected_total > total_limit:
+        problems.append(
+            f"projected gross long ${projected_total:,.0f} exceeds MAX_EXPOSURE "
+            f"{MAX_EXPOSURE} x liquidationValue = ${total_limit:,.0f}"
+        )
+    if not problems:
+        return None
+    return "LEVERAGE GUARD TRIPPED — MANUAL_REQUIRED: " + "; ".join(problems) + "."
 
 
 # ============================================================================
@@ -1875,8 +2235,10 @@ def write_trade_plan_workbook(
     summary: pd.DataFrame,
     target_weights: pd.Series,
     date_str: str,
+    exposure_info: dict[str, Any] | None = None,
 ) -> Path:
-    """Write audit workbook with trade plan, summary, and target weights."""
+    """Write audit workbook with trade plan, summary, target weights and
+    (when given) the exposure-dial audit fields."""
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"schwab_trade_plan_{date_str}.xlsx"
 
@@ -1887,6 +2249,9 @@ def write_trade_plan_workbook(
         tw_df = target_weights.reset_index()
         tw_df.columns = ["ETF", "Weight"]
         tw_df.to_excel(writer, sheet_name="Target Weights", index=False)
+
+        if exposure_info is not None:
+            _info_frame(exposure_info).to_excel(writer, sheet_name="Exposure", index=False)
 
         workbook = writer.book
         for sheet_name in writer.sheets:
@@ -1901,8 +2266,10 @@ def write_execution_log(
     output_dir: Path,
     results: list[SliceResult],
     date_str: str,
+    run_info: dict[str, Any] | None = None,
 ) -> Path:
-    """Write TWAP execution log as an Excel workbook."""
+    """Write TWAP execution log as an Excel workbook (plus a Run Info sheet
+    with the exposure-dial audit fields when given)."""
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"schwab_execution_log_{date_str}.xlsx"
 
@@ -1935,9 +2302,18 @@ def write_execution_log(
         df.to_excel(writer, sheet_name="Execution Log", index=False)
         ws = writer.sheets["Execution Log"]
         ws.set_column(0, 20, 18)
+        if run_info is not None:
+            _info_frame(run_info).to_excel(writer, sheet_name="Run Info", index=False)
 
     print(f"  Execution log written: {path}")
     return path
+
+
+def _info_frame(info: dict[str, Any]) -> pd.DataFrame:
+    """Key/Value frame for an audit dict; None renders as an em dash."""
+    return pd.DataFrame(
+        [{"Key": k, "Value": "—" if v is None else v} for k, v in info.items()]
+    )
 
 
 def write_marker(output_dir: Path, date_str: str, data: dict[str, Any]) -> Path:
@@ -2213,6 +2589,14 @@ def parse_args() -> RunConfig:
              "are found, the run still refuses and you must resolve them in "
              "the Schwab UI first.",
     )
+    parser.add_argument(
+        "--exposure-mode", choices=["dial", "off"], default="dial",
+        help="dial (default): scale the country book by target_exposure from "
+             "the Exposure_Dial sheet (0..2x; >1x uses margin, long-only). "
+             "off: ignore the dial and trade exactly as before (exposure 1.0). "
+             "Live dial trading is blocked until EXPOSURE_DIAL_LIVE_APPROVED "
+             "is set True in this script.",
+    )
     args = parser.parse_args()
 
     return RunConfig(
@@ -2232,6 +2616,7 @@ def parse_args() -> RunConfig:
         max_slice_carry_multiple=args.max_slice_carry_multiple,
         max_target_weights_age_days=args.max_target_weights_age_days,
         force_rerun=args.force_rerun,
+        exposure_mode=args.exposure_mode,
     )
 
 
@@ -2253,7 +2638,11 @@ def main() -> None:
     print(f"  Max Unfilled Sell %: {config.max_unfilled_sell_pct:.1%} (abort buys above this)")
     print(f"  Max Cleanup Spread:  {config.max_cleanup_spread_bps:.0f} bps (skip cleanup above this)")
     print(f"  Notifications:  {'ON' if config.notify else 'OFF'}")
+    print(f"  Exposure Mode:  {config.exposure_mode}")
     print()
+
+    # Live-dial gate: before Schwab is contacted, any order, or the marker.
+    check_exposure_live_gate(config.exposure_mode, is_live)
 
     # ------------------------------------------------------------------
     # Step 1: Load target weights
@@ -2264,6 +2653,13 @@ def main() -> None:
     target_weights = load_target_weights()
     if target_weights.sum() < 0.01:
         raise TradingError("Target weights sum to ~0. Nothing to trade.")
+    exposure_info = build_exposure_info(config)
+    exposure = float(exposure_info["target_exposure"])
+    if config.exposure_mode == "dial":
+        print(f"  Exposure dial:  target_exposure={exposure:.4f}  breadth={exposure_info['breadth']:.4f}  "
+              f"asof={exposure_info['asof_date']}  computed_at={exposure_info['computed_at']}")
+    else:
+        print("  Exposure dial:  OFF (exposure 1.0, Exposure_Dial not read)")
     print()
 
     # ------------------------------------------------------------------
@@ -2278,10 +2674,19 @@ def main() -> None:
           f"'{config.account_name}' account before approving live trades")
 
     details = get_account_details(client, account_hash)
-    check_margin_account(details)
+    check_margin_account(details, exposure)
     holdings, investable_cash, total_equity = parse_holdings(details)
     print(f"  Total equity:     ${total_equity:>14,.2f}")
     print(f"  Investable cash:  ${investable_cash:>14,.2f}")
+    if exposure > 1.0:
+        buying_power = parse_buying_power(details)
+        if buying_power is None:
+            raise TradingError(
+                f"EXPOSURE DIAL: target exposure {exposure:.2f} (> 1.0) needs Schwab's "
+                f"currentBalances.{BUYING_POWER_FIELD}, but the field is missing from the "
+                "account details. Refusing to size margin buys (no fallback to cash)."
+            )
+        print(f"  Buying power:     ${buying_power:>14,.2f}  (margin; used for buys at exposure > 1)")
     if not holdings.empty:
         print(f"  Positions:        {len(holdings)}")
         for _, row in holdings.iterrows():
@@ -2293,10 +2698,15 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 3: Apply liquidity cap
     # ------------------------------------------------------------------
-    if config.apply_liquidity_cap:
+    # The cap's AUM is the gross dollars actually deployed (liquidationValue
+    # x exposure); at exposure 0 nothing is bought, so the cap is skipped.
+    if config.apply_liquidity_cap and exposure == 0.0:
+        print("STEP 3: Liquidity (ADV) cap skipped — target exposure is 0 (no buys).")
+        print()
+    elif config.apply_liquidity_cap:
         print("STEP 3: Applying liquidity (ADV) position cap...")
         target_weights = apply_liquidity_cap_to_weights(
-            target_weights, aum=total_equity, maxpart=config.liq_maxpart,
+            target_weights, aum=total_equity * exposure, maxpart=config.liq_maxpart,
         )
         print(f"  Post-cap weights: {len(target_weights)} ETFs, sum = {target_weights.sum():.6f}")
         print()
@@ -2320,11 +2730,18 @@ def main() -> None:
     print("STEP 5: Building trade plan...")
     plan, summary = build_trade_plan(
         target_weights, holdings, investable_cash, total_equity, ref_prices, config,
+        exposure=exposure,
     )
 
     sells = plan[plan["Action"] == "SELL"]
     buys = plan[plan["Action"] == "BUY"]
     holds = plan[plan["Action"] == "HOLD"]
+
+    print(f"  Exposure mode:   {exposure_info['exposure_mode']}")
+    print(f"  Target exposure: {exposure:.4f}")
+    print(f"  Breadth:         {'—' if exposure_info['breadth'] is None else format(exposure_info['breadth'], '.4f')}")
+    print(f"  Dial as-of:      {exposure_info['asof_date'] or '—'}")
+    print(f"  Dial computed:   {exposure_info['computed_at'] or '—'}")
 
     print(f"\n  SELL orders: {len(sells[sells['Shares to Trade'] != 0])}")
     for _, row in sells[sells["Shares to Trade"] != 0].iterrows():
@@ -2342,7 +2759,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 6: Write trade plan
     # ------------------------------------------------------------------
-    plan_path = write_trade_plan_workbook(config.output_dir, plan, summary, target_weights, date_str)
+    plan_path = write_trade_plan_workbook(
+        config.output_dir, plan, summary, target_weights, date_str, exposure_info=exposure_info,
+    )
     print()
 
     # ------------------------------------------------------------------
@@ -2413,7 +2832,11 @@ def main() -> None:
         "timestamp": datetime.now().isoformat(),
         "account_name": config.account_name,
         "date": date_str,
+        **exposure_info,
     }
+    # Execution-log Run Info: the exposure audit fields plus anything the
+    # buy phase adds (buying-power sizing at exposure > 1).
+    run_info: dict[str, Any] = dict(exposure_info)
     claim_live_marker(config.output_dir, date_str, marker_data, allow_overwrite=config.force_rerun)
 
     # Build the live dashboard
@@ -2521,11 +2944,14 @@ def main() -> None:
             # phase loudly (same pattern as the unfilled-sells abort above)
             # instead of guessing.
             live_cash: float | None = None
+            fresh_details: dict[str, Any] = {}
+            fresh_holdings = pd.DataFrame(columns=["Symbol", "Market Value", "Long Quantity"])
+            live_equity = 0.0
             cash_fetch_error: str = ""
             for attempt in range(3):
                 try:
                     fresh_details = get_account_details(client, account_hash)
-                    _, live_cash, _live_equity = parse_holdings(fresh_details)
+                    fresh_holdings, live_cash, live_equity = parse_holdings(fresh_details)
                     break
                 except Exception as exc:
                     cash_fetch_error = str(exc)
@@ -2550,9 +2976,109 @@ def main() -> None:
                 ))
                 live_cash = 0.0  # only used for the printed summary below; buy_plan unused if aborted
 
+            # Exposure > 1: buys are funded with margin buying power, not
+            # cash. A missing buyingPower is a loud abort, never a silent
+            # fallback to the cash path.
+            live_buying_power: float | None = None
+            if not buys_aborted and exposure > 1.0:
+                live_buying_power = parse_buying_power(fresh_details)
+                if live_buying_power is None:
+                    buys_aborted = True
+                    buys_aborted_reason = (
+                        f"Exposure {exposure:.2f} (> 1.0) needs currentBalances."
+                        f"{BUYING_POWER_FIELD} after sells, but it is missing from the "
+                        "re-fetched account details. Refusing to size margin buys "
+                        "from cash instead."
+                    )
+                    dashboard.add_log(f"[bold red]ABORTING BUY PHASE: {buys_aborted_reason}[/bold red]")
+                    dashboard.refresh()
+                    marker_data["status"] = "SELLS_DONE_BUYS_ABORTED"
+                    marker_data["abort_reason"] = buys_aborted_reason
+                    write_marker(config.output_dir, date_str, marker_data)
+                    notify_user(config, "T2 TWAP: BUY PHASE ABORTED (buying power missing)", (
+                        f"{buys_aborted_reason}\nBuys were NOT submitted. "
+                        f"Sells already executed — reconcile and rerun with --force-rerun."
+                    ))
+
             if not buys_aborted:
-                buy_plan = scale_buy_plan_to_cash(plan, live_cash, config.cash_buffer_pct, ref_prices, total_equity)
+                if exposure > 1.0:
+                    buy_plan = scale_buy_plan_to_buying_power(plan, live_buying_power, total_equity, ref_prices)
+                else:
+                    buy_plan = scale_buy_plan_to_cash(plan, live_cash, config.cash_buffer_pct, ref_prices, total_equity)
                 buy_plan_for_tca = buy_plan
+
+            # Exposure > 1: persist the buying-power sizing, and abort loudly
+            # if buying power is exhausted (spendable <= 0, or so small every
+            # BUY floored to zero shares) rather than "completing" with no
+            # buys. Exposure <= 1 keeps the pre-dial cash path untouched.
+            if not buys_aborted and exposure > 1.0:
+                planned_buy_dollars = float(plan.loc[plan["Action"] == "BUY", "Trade Dollars"].sum())
+                sized_buy_dollars = float(buy_plan.loc[buy_plan["Action"] == "BUY", "Trade Dollars"].sum())
+                bp_spendable = margin_spendable(live_buying_power, total_equity)
+                bp_audit = {
+                    "buying_power": live_buying_power,
+                    "buying_power_spendable": bp_spendable,
+                    "planned_buy_dollars": planned_buy_dollars,
+                    "buy_dollars_after_bp_sizing": sized_buy_dollars,
+                }
+                run_info.update(bp_audit)
+                marker_data.update(bp_audit)
+                had_buys = ((plan["Action"] == "BUY") & (plan["Shares to Trade"] >= 1)).any()
+                has_buys = ((buy_plan["Action"] == "BUY") & (buy_plan["Shares to Trade"] >= 1)).any()
+                if had_buys and (bp_spendable <= 0 or not has_buys):
+                    buys_aborted = True
+                    buys_aborted_reason = (
+                        f"BUYING POWER EXHAUSTED — MANUAL_REQUIRED: exposure {exposure:.2f} needs "
+                        f"${planned_buy_dollars:,.0f} of buys, but buyingPower "
+                        f"${live_buying_power:,.0f} minus the {BUYING_POWER_RESERVE_PCT:.0%} reserve "
+                        f"leaves ${bp_spendable:,.0f} spendable"
+                        + ("" if bp_spendable <= 0 else " (every BUY floors to zero shares)")
+                        + "."
+                    )
+                    dashboard.add_log(f"[bold red]ABORTING BUY PHASE: {buys_aborted_reason}[/bold red]")
+                    dashboard.refresh()
+                    marker_data["status"] = "SELLS_DONE_BUYS_ABORTED"
+                    marker_data["abort_reason"] = buys_aborted_reason
+                    write_marker(config.output_dir, date_str, marker_data)
+                    notify_user(config, "T2 TWAP: BUY PHASE ABORTED (buying power exhausted)", (
+                        f"{buys_aborted_reason}\nBuys were NOT submitted. "
+                        f"Sells already executed — MANUAL review required."
+                    ))
+                elif planned_buy_dollars > 0 and sized_buy_dollars < planned_buy_dollars:
+                    scale_note = (
+                        f"Buys scaled to buying power: ${sized_buy_dollars:,.0f} of "
+                        f"${planned_buy_dollars:,.0f} planned "
+                        f"({sized_buy_dollars / planned_buy_dollars:.1%}); spendable "
+                        f"${bp_spendable:,.0f} = buyingPower ${live_buying_power:,.0f} - "
+                        f"{BUYING_POWER_RESERVE_PCT:.0%} reserve. Book will be below target exposure."
+                    )
+                    run_info["buy_scale_note"] = scale_note
+                    marker_data["buy_scale_note"] = scale_note
+                    write_marker(config.output_dir, date_str, marker_data)
+                    dashboard.add_log(f"[bold yellow]{scale_note}[/bold yellow]")
+                    dashboard.refresh()
+                    notify_user(config, "T2 TWAP: buys scaled to buying power", scale_note)
+
+            # Leverage guard (dial mode only; `off` keeps the pre-dial flow).
+            if not buys_aborted and config.exposure_mode == "dial" and (
+                (buy_plan["Action"] == "BUY") & (buy_plan["Shares to Trade"] >= 1)
+            ).any():
+                guard_lv = min(total_equity, live_equity) if live_equity > 0 else total_equity
+                guard_reason = check_leverage_guard(buy_plan, fresh_holdings, guard_lv, exposure)
+                if guard_reason is not None:
+                    buys_aborted = True
+                    buys_aborted_reason = guard_reason
+                    dashboard.add_log(f"[bold red]ABORTING BUY PHASE: {buys_aborted_reason}[/bold red]")
+                    dashboard.refresh()
+                    marker_data["status"] = "SELLS_DONE_BUYS_ABORTED"
+                    marker_data["abort_reason"] = buys_aborted_reason
+                    write_marker(config.output_dir, date_str, marker_data)
+                    notify_user(config, "T2 TWAP: BUY PHASE ABORTED (leverage guard)", (
+                        f"{buys_aborted_reason}\nBuys were NOT submitted. "
+                        f"Sells already executed — MANUAL review required."
+                    ))
+
+            if not buys_aborted:
 
                 # Register BUY orders now, using the (possibly rescaled) plan.
                 for _, row in buy_plan[buy_plan["Action"] == "BUY"].iterrows():
@@ -2581,7 +3107,7 @@ def main() -> None:
         time.sleep(2.0)
 
     # Write execution log (after exiting dashboard's screen mode)
-    exec_path = write_execution_log(config.output_dir, all_results, date_str)
+    exec_path = write_execution_log(config.output_dir, all_results, date_str, run_info=run_info)
 
     # Compute detailed TCA broken down by leg and symbol. Sells use the
     # original plan; buys use the (possibly rescaled-to-cash) buy plan so

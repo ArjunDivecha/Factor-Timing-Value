@@ -25,19 +25,30 @@ the trading engine and must stay in sync (see gotchas).
 - `.../Step Nine Calculate Portfolio Returns.py` — final portfolio returns.
 - `.../Step Fourteen Target Optimization.py` — CVXPY country optimizer, **long-only**
   (`weights_var >= 0` strips shorts). `...LongShort.py` is the 130/30 variant.
-- `.../Step Schwab Trading.py` + `.../step_schwab_dashboard.py` — **live-money TWAP executor.**
-- `.../Run_All_Pipeline.py` — canonical step order (from scratch). `Run_Limited_Pipeline.py`
-  reruns from Step Five onward.
+- `.../Step Ten Exposure Dial.py` — runs LAST, after `Step FINALFINAL.py`. Computes breadth (share
+  of 34 country indices above their 200-day EMA at the last completed month-end) from the daily
+  Bloomberg file, sets `target_exposure = clip(2 x breadth, 0, 2)`, and writes `Exposure_Dial` +
+  `Exposure_Detail` sheets into `T2_FINAL_T60_VALUE.xlsx` for the trader to read. Replaces the old
+  `Step Ten Create Final Report.py` (PDF report generator), which is deleted.
+- `.../Step Schwab Trading.py` + `.../step_schwab_dashboard.py` — **live-money TWAP executor.** New
+  `--exposure-mode {dial,off}` flag (default `dial`) scales the country book by `Exposure_Dial`'s
+  `target_exposure`; `off` reproduces the pre-dial behavior exactly. Live dial-mode runs are refused
+  until `EXPOSURE_DIAL_LIVE_APPROVED` is set True — use `--exposure-mode off` for live rebalances
+  until then.
+- `.../Run_All_Pipeline.py` — canonical step order (from scratch), now ending in `Step FINALFINAL.py`
+  → `Step Ten Exposure Dial.py`. `Run_Limited_Pipeline.py` reruns from Step Five onward, same ending.
 - `.../Step Factor Categories.xlsx` — factor eligibility whitelist (Max>0 → the 36 Value+Quality
   factors eligible for Step Five; Max=0 dropped; **missing factors default to 0.0, not 1.0**).
-- `.../tests/test_schwab_twap_engine.py` — 33 fake-broker safety tests (trading engine only).
+- `.../tests/test_schwab_twap_engine.py` — the fake-broker suite (run `venv/bin/python -m pytest
+  tests/ -q`), trading engine only; grew with new tests for the exposure dial.
 
 ## Commands that work
 ```bash
-python3 -m pytest tests/ -q          # 33 Schwab-engine tests — VERIFIED collect+run
+python3 -m pytest tests/ -q          # the fake-broker suite (Schwab engine incl. exposure dial) — VERIFIED collect+run
 python3 "Run_All_Pipeline.py"        # full pipeline, Step Zero→FINALFINAL (see caveat below)
 python3 "Run_Limited_Pipeline.py"    # rerun Step Five→FINALFINAL (skips data rebuild)
-python3 "Step Schwab Trading.py"     # LIVE MONEY. Defaults to dry-run; read the file first.
+python3 "Step Ten Exposure Dial.py"  # last pipeline step; writes Exposure_Dial into T2_FINAL_T60_VALUE.xlsx
+python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignored. Defaults to dry-run; read the file first.
 ```
 - Pipeline step order in `Run_All_Pipeline.py` was verified — every one of its 21 listed
   scripts exists on disk. The end-to-end run itself was **not executed here (unverified)**;
@@ -80,7 +91,11 @@ python3 "Step Schwab Trading.py"     # LIVE MONEY. Defaults to dry-run; read the
 ## Current state
 - **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
   on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.
-- Done: Top-3 Tcost engine, ADV liquidity cap, hardened Schwab engine (33 tests pass), OpenWiki docs.
+- **Exposure dial added 2026-09-27** (breadth-based 0-200% overlay, decided by Arjun; research in
+  the Momentum repo's `Experiments Deep Dive/Regime Breadth Overlay/FINDINGS.md`). October 2026 is
+  dry-run only — the live trader stays in `--exposure-mode off` until `EXPOSURE_DIAL_LIVE_APPROVED`.
+- Done: Top-3 Tcost engine, ADV liquidity cap, hardened Schwab engine (fake-broker suite passes,
+  incl. exposure-dial tests), OpenWiki docs.
 - **Known-untested:** the entire research pipeline (Steps 0-21). Only the trading engine has tests.
 - **CORRECTION to prior notes:** the month-over-month regime-break detector is **implemented and
   wired in** (`detect_regime_breaks_sheet`, writes `T2_regime_break_log.xlsx`) — earlier CLAUDE/AGENTS

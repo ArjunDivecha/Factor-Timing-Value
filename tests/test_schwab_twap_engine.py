@@ -397,6 +397,7 @@ def make_config(**overrides) -> Any:
         notify=False, output_dir=Path("."), max_unfilled_sell_pct=0.05,
         max_cleanup_spread_bps=50.0, max_slice_carry_multiple=3.0,
         max_target_weights_age_days=35.0, force_rerun=False,
+        exposure_mode="off",
     )
     defaults.update(overrides)
     return sst.RunConfig(**defaults)
@@ -1124,6 +1125,550 @@ def test_zero_snaxx_balance_is_a_no_op_for_allocatable():
 
     snaxx_summary_row = summary.loc[summary["Metric"].str.contains("SNAXX", case=False)]
     assert snaxx_summary_row.iloc[0]["Value"] == "$0.00"
+
+
+# ============================================================================
+# 20. EXPOSURE DIAL (added 2026-09-27; spec: Experiments Deep Dive/Regime
+#     Breadth Overlay/TRADER_EXPOSURE_SPEC.md). These drive the REAL main()
+#     end to end against the fake broker: target weights, the Schwab client,
+#     the market-hours gate and the Rich dashboard are stubbed; everything
+#     else (dial validation, sizing, liquidity-cap wiring, buy funding,
+#     leverage guard, marker, audit files) is production code.
+# ============================================================================
+
+import contextlib  # noqa: E402
+import math  # noqa: E402
+
+EXPOSURE_ACCOUNT_NUMBER = "12345" + sst.ACCOUNT_NAME_TO_LAST3[sst.DEFAULT_ACCOUNT_NAME]
+LV = 1_000_000.0
+_REAL_WRITE_TRADE_PLAN = sst.write_trade_plan_workbook
+
+
+class NullDashboard:
+    """Stand-in for TwapDashboard: every method is a no-op."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def live(self):
+        return contextlib.nullcontext()
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None
+
+
+class FakeAccountClient(FakeSchwabClient):
+    """FakeSchwabClient plus the account endpoints main() calls. Each
+    account_details() call returns the next scripted snapshot; the last
+    one repeats (so [initial, post_sell] models the post-sell refetch)."""
+
+    def __init__(self, details_sequence: list[dict]) -> None:
+        super().__init__()
+        self.details_sequence = list(details_sequence)
+        self.account_details_calls = 0
+
+    def linked_accounts(self) -> FakeResponse:
+        return FakeResponse(200, json_data=[{"accountNumber": EXPOSURE_ACCOUNT_NUMBER, "hashValue": "HASH"}])
+
+    def account_details(self, account_hash: str, fields: str = "positions") -> FakeResponse:
+        idx = min(self.account_details_calls, len(self.details_sequence) - 1)
+        self.account_details_calls += 1
+        return FakeResponse(200, json_data=self.details_sequence[idx])
+
+
+def account_snapshot(
+    positions: dict[str, tuple[float, float]] | None = None,
+    cash: float = LV, liquidation_value: float = LV,
+    buying_power: float | None = 3 * LV, acct_type: str = "MARGIN",
+) -> dict:
+    """positions: {symbol: (shares, market_value)}."""
+    balances = {"cashBalance": cash, "liquidationValue": liquidation_value}
+    if buying_power is not None:
+        balances["buyingPower"] = buying_power
+    return {"securitiesAccount": {
+        "type": acct_type,
+        "positions": [
+            {"instrument": {"symbol": s}, "longQuantity": q, "marketValue": mv}
+            for s, (q, mv) in (positions or {}).items()
+        ],
+        "currentBalances": balances,
+    }}
+
+
+def dial_rows(**overrides) -> list[tuple[str, Any]]:
+    now = datetime.now()
+    rows = {
+        "target_exposure": 1.0, "breadth": 0.5, "n_above": 17, "n_valid": 34,
+        "asof_date": (now - timedelta(days=1)).date().isoformat(),
+        "dial_low": 0.0, "dial_high": 2.0, "rule": "test",
+        "computed_at": now.isoformat(timespec="seconds"),
+        "strategy": "test", "source_file": "test.xlsx",
+        "source_last_date": (now - timedelta(days=1)).date().isoformat(),
+        "base_weight_sum": 1.0,
+    }
+    rows.update(overrides)
+    return [(k, v) for k, v in rows.items() if v is not _DROP]
+
+
+_DROP = object()
+
+
+def write_target_workbook(path: Path, dial: list[tuple[str, Any]] | None) -> Path:
+    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+        pd.DataFrame({"Country": ["Brazil"], "Country Alpha": [0.0], "Country Weight": [1.0]}).to_excel(
+            xw, sheet_name="Latest_Country_Alpha_Weights", index=False)
+        if dial is not None:
+            pd.DataFrame(dial, columns=["Key", "Value"]).to_excel(xw, sheet_name="Exposure_Dial", index=False)
+    return path
+
+
+class MainHarness:
+    """Runs sst.main() against a FakeAccountClient and records what it did."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *,
+                 weights: dict[str, float], details_sequence: list[dict],
+                 dial: list[tuple[str, Any]] | None, quotes: dict[str, tuple[float, float]],
+                 approved: bool = True, run_name: str = "run") -> None:
+        self.run_dir = tmp_path / run_name
+        self.run_dir.mkdir()
+        self.out_dir = self.run_dir / "outputs"
+        self.client = FakeAccountClient(details_sequence)
+        for sym, (bid, ask) in quotes.items():
+            self.client.set_quote(sym, bid, ask)
+        self.cap_calls: list[dict] = []
+        self.plans: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+        self.client_requested = 0
+        self._weights = pd.Series(weights, dtype=float)
+        self._mp = monkeypatch
+
+        target_path = write_target_workbook(self.run_dir / "targets.xlsx", dial)
+        monkeypatch.setattr(sst, "T2_FINAL_PATH", target_path)
+        monkeypatch.setattr(sst, "OUTPUT_DIR", self.out_dir)
+        monkeypatch.setattr(sst, "EXPOSURE_DIAL_LIVE_APPROVED", approved)
+        monkeypatch.setattr(sst, "TwapDashboard", NullDashboard)
+        monkeypatch.setattr(sst, "load_target_weights", lambda: self._weights.copy())
+        monkeypatch.setattr(sst, "check_market_hours", lambda *a, **k: "patched open")
+
+        def fake_get_client():
+            self.client_requested += 1
+            return self.client
+        monkeypatch.setattr(sst, "get_schwab_client", fake_get_client)
+
+        def spy_cap(weights, aum, maxpart):
+            self.cap_calls.append({"aum": aum, "maxpart": maxpart})
+            return weights
+        monkeypatch.setattr(sst, "apply_liquidity_cap_to_weights", spy_cap)
+
+        real_writer = _REAL_WRITE_TRADE_PLAN
+        def spy_writer(output_dir, plan, summary, *args, **kwargs):
+            self.plans.append((plan.copy(), summary.copy()))
+            return real_writer(output_dir, plan, summary, *args, **kwargs)
+        monkeypatch.setattr(sst, "write_trade_plan_workbook", spy_writer)
+
+    def run(self, *argv: str) -> None:
+        self._mp.setattr(sys, "argv", ["Step Schwab Trading.py", "--twap-slices", "1", "--twap-window", "1", *argv])
+        sst.main()
+
+    @property
+    def plan(self) -> pd.DataFrame:
+        return self.plans[-1][0]
+
+    def marker(self) -> dict | None:
+        files = list(self.out_dir.glob("schwab_live_marker_*.json")) if self.out_dir.exists() else []
+        return json.loads(files[0].read_text()) if files else None
+
+    def orders(self, action: str) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for call in self.client.place_order_calls:
+            leg = call["orderLegCollection"][0]
+            if leg["instruction"] == action:
+                sym = leg["instrument"]["symbol"]
+                out[sym] = out.get(sym, 0) + int(leg["quantity"])
+        return out
+
+
+TWO_ETF_WEIGHTS = {"EWZ": 0.5, "EWJ": 0.5}
+TWO_ETF_QUOTES = {"EWZ": (10.00, 10.02), "EWJ": (20.00, 20.02)}
+
+
+def test_exposure_mode_defaults_to_dial(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["Step Schwab Trading.py"])
+    assert sst.parse_args().exposure_mode == "dial"
+
+
+# (a) off and dial@1.0 are identical ----------------------------------------
+
+def test_exposure_one_reproduces_off_plan_and_orders_exactly(monkeypatch, tmp_path, fake_clock):
+    """--exposure-mode off and dial with target_exposure=1.0 must produce the
+    identical trade plan AND the identical live order stream."""
+    snap = account_snapshot({"EWZ": (30_000, 300_000.0), "EWH": (1_000, 20_000.0)}, cash=680_000.0)
+    quotes = {**TWO_ETF_QUOTES, "EWH": (20.00, 20.02)}
+    runs = {}
+    for mode in ("off", "dial"):
+        h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[snap],
+                        dial=dial_rows(target_exposure=1.0), quotes=quotes, run_name=mode)
+        h.run("--live", "--confirm-live", "--exposure-mode", mode)
+        runs[mode] = h
+
+    pd.testing.assert_frame_equal(runs["off"].plan, runs["dial"].plan)
+    pd.testing.assert_frame_equal(runs["off"].plans[-1][1], runs["dial"].plans[-1][1])
+    assert runs["off"].client.place_order_calls == runs["dial"].client.place_order_calls
+    assert runs["off"].client.place_order_calls, "sanity: the scenario must actually trade"
+    assert runs["off"].marker()["exposure_mode"] == "off"
+    assert runs["dial"].marker()["exposure_mode"] == "dial"
+    assert runs["dial"].marker()["target_exposure"] == 1.0
+
+
+def test_off_mode_never_reads_the_dial_sheet(monkeypatch, tmp_path, fake_clock):
+    """off must work even when the Exposure_Dial sheet does not exist."""
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot()], dial=None, quotes=TWO_ETF_QUOTES)
+    h.run("--exposure-mode", "off")
+    assert h.plan["Target Dollars"].sum() == pytest.approx(0.97 * LV)
+
+
+def test_build_trade_plan_exposure_one_is_bit_identical_to_default():
+    holdings = pd.DataFrame([{"Symbol": "EWZ", "Market Value": 123_457.0, "Long Quantity": 12_333.0}])
+    weights = pd.Series({"EWZ": 0.37, "EWJ": 0.63})
+    prices = pd.Series({"EWZ": 10.01, "EWJ": 20.01})
+    cfg = make_config()
+    base = sst.build_trade_plan(weights, holdings, 1.0, 987_654.321, prices, cfg)
+    one = sst.build_trade_plan(weights, holdings, 1.0, 987_654.321, prices, cfg, exposure=1.0)
+    pd.testing.assert_frame_equal(base[0], one[0])
+    pd.testing.assert_frame_equal(base[1], one[1])
+
+
+# (b) exposure 1.7 with ample buying power -----------------------------------
+
+def test_exposure_1_7_ample_buying_power_buys_full_size(monkeypatch, tmp_path, fake_clock):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot(buying_power=3 * LV)],
+                    dial=dial_rows(target_exposure=1.7), quotes=TWO_ETF_QUOTES)
+    h.run("--live", "--confirm-live")
+
+    assert h.plan["Target Dollars"].sum() == pytest.approx(1.7 * 0.97 * LV)
+    buy_rows = h.plan[h.plan["Action"] == "BUY"]
+    planned = dict(zip(buy_rows["Symbol"], buy_rows["Shares to Trade"].astype(int)))
+    assert planned == {"EWZ": math.floor(0.5 * 1.7 * 0.97 * LV / 10.01),
+                       "EWJ": math.floor(0.5 * 1.7 * 0.97 * LV / 20.01)}
+    assert h.orders("BUY") == planned, "buys must be executed at full 1.7x size"
+    assert h.orders("SELL") == {}
+    m = h.marker()
+    assert m["status"] == "COMPLETED"
+    assert m["target_exposure"] == 1.7 and m["breadth"] == 0.5
+    assert m["asof_date"] and m["computed_at"]
+
+
+# (c) exposure 1.7 with limited buying power ---------------------------------
+
+def test_exposure_1_7_limited_buying_power_scales_to_bp_minus_reserve(monkeypatch, tmp_path, fake_clock):
+    bp = 1_000_000.0
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot(buying_power=bp)],
+                    dial=dial_rows(target_exposure=1.7), quotes=TWO_ETF_QUOTES)
+    h.run("--live", "--confirm-live")
+
+    spendable = bp - sst.BUYING_POWER_RESERVE_PCT * LV   # 970,000
+    bought = h.orders("BUY")
+    bought_dollars = bought["EWZ"] * 10.01 + bought["EWJ"] * 20.01
+    assert bought_dollars <= spendable
+    assert bought_dollars >= spendable - 2 * 20.01, "scaled buys should use (almost) all spendable BP"
+    planned_dollars = float(h.plan.loc[h.plan["Action"] == "BUY", "Trade Dollars"].sum())
+    assert planned_dollars > 1.6 * LV, "sanity: the plan itself was sized to 1.7x before scaling"
+    m = h.marker()
+    assert m["status"] == "COMPLETED"
+    assert "scaled to buying power" in m["buy_scale_note"]
+    assert m["buying_power_spendable"] == pytest.approx(spendable)
+    log_x = pd.read_excel(next(h.out_dir.glob("schwab_execution_log_*.xlsx")), sheet_name="Run Info")
+    assert "scaled to buying power" in dict(zip(log_x["Key"], log_x["Value"]))["buy_scale_note"]
+
+
+def test_scale_buy_plan_to_buying_power_unit():
+    plan = pd.DataFrame([
+        {"Symbol": "EWZ", "Action": "BUY", "Shares to Trade": 1000.0, "Trade Dollars": 10_000.0, "Reference Price": 10.0},
+        {"Symbol": "EWJ", "Action": "SELL", "Shares to Trade": -50.0, "Trade Dollars": -1_000.0, "Reference Price": 20.0},
+    ])
+    prices = pd.Series({"EWZ": 10.0, "EWJ": 20.0})
+    # spendable = 8,000 - 3% x 100,000 = 5,000 -> half of the planned $10,000
+    scaled = sst.scale_buy_plan_to_buying_power(plan, 8_000.0, 100_000.0, prices)
+    assert scaled.loc[0, "Shares to Trade"] == 500
+    assert scaled.loc[1, "Shares to Trade"] == -50
+    ample = sst.scale_buy_plan_to_buying_power(plan, 50_000.0, 100_000.0, prices)
+    assert ample.loc[0, "Shares to Trade"] == 1000
+
+
+# (d) exposure 0 --------------------------------------------------------------
+
+def test_exposure_zero_sells_whole_country_book_and_buys_nothing(monkeypatch, tmp_path, fake_clock):
+    snap = account_snapshot(
+        {"EWZ": (20_000, 200_000.0), "EWJ": (10_000, 200_000.0), "SNAXX": (50_000, 50_000.0)},
+        cash=550_000.0,
+    )
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[snap],
+                    dial=dial_rows(target_exposure=0.0), quotes=TWO_ETF_QUOTES)
+    h.run("--live", "--confirm-live")
+
+    assert h.orders("SELL") == {"EWZ": 20_000, "EWJ": 10_000}
+    assert h.orders("BUY") == {}
+    assert "SNAXX" not in set(h.plan["Symbol"])
+    assert (h.plan["Target Dollars"] == 0).all()
+    assert h.cap_calls == [], "liquidity cap must be skipped at exposure 0"
+    assert h.marker()["status"] == "COMPLETED"
+    assert h.marker()["target_exposure"] == 0.0
+
+
+# (e) bad dial -> error before any order ----------------------------------------
+
+@pytest.mark.parametrize("dial,match", [
+    (None, "not found"),
+    (dial_rows(target_exposure="abc"), "not a number"),
+    (dial_rows(target_exposure=True), "not a number"),
+    (dial_rows(target_exposure=float("nan")), "missing or blank"),
+    (dial_rows(target_exposure=2.5), "outside"),
+    (dial_rows(target_exposure=-0.1), "outside"),
+    (dial_rows(target_exposure=_DROP), "missing"),
+    (dial_rows(computed_at=_DROP), "missing"),
+    (dial_rows(asof_date=(datetime.now() - timedelta(days=45)).date().isoformat()), "days old"),
+    (dial_rows(asof_date=(datetime.now() + timedelta(days=2)).date().isoformat()), "later than today"),
+    (dial_rows(computed_at=(datetime.now() - timedelta(days=36)).isoformat(timespec="seconds")), "days old"),
+    (dial_rows(computed_at="not-a-date"), "ISO"),
+])
+def test_bad_exposure_dial_errors_before_any_order(monkeypatch, tmp_path, fake_clock, dial, match):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot()], dial=dial, quotes=TWO_ETF_QUOTES)
+    with pytest.raises(sst.TradingError, match=match):
+        h.run("--live", "--confirm-live")
+    assert h.client.place_order_calls == []
+    assert h.marker() is None
+    with pytest.raises(sst.TradingError, match=match):
+        h.run()  # dry run: still a hard error, no fallback to 1.0
+
+
+def test_dial_asof_age_limit_is_inclusive_at_40_days(tmp_path):
+    now = datetime(2026, 9, 27, 12, 0)
+    ok = write_target_workbook(tmp_path / "ok.xlsx", dial_rows(
+        asof_date="2026-08-18", computed_at="2026-09-27T09:00:00"))
+    assert sst.load_exposure_dial(35.0, path=ok, now=now)["asof_date"] == "2026-08-18"
+    bad = write_target_workbook(tmp_path / "bad.xlsx", dial_rows(
+        asof_date="2026-08-17", computed_at="2026-09-27T09:00:00"))
+    with pytest.raises(sst.TradingError, match="41 days old"):
+        sst.load_exposure_dial(35.0, path=bad, now=now)
+
+
+# (f) live + dial + not approved -------------------------------------------------
+
+def test_live_dial_blocked_until_approved_before_any_order_or_marker(monkeypatch, tmp_path, fake_clock):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot()], dial=dial_rows(target_exposure=1.5),
+                    quotes=TWO_ETF_QUOTES, approved=False)
+    with pytest.raises(sst.TradingError, match="--exposure-mode off") as exc:
+        h.run("--live", "--confirm-live")
+    assert "EXPOSURE_DIAL_LIVE_APPROVED" in str(exc.value)
+    assert h.client_requested == 0, "Schwab must not even be contacted"
+    assert h.client.place_order_calls == []
+    assert h.marker() is None
+
+    # The same unapproved state still allows a dial dry run and an off live run.
+    h.run()
+    h.run("--live", "--confirm-live", "--exposure-mode", "off")
+    assert h.marker()["exposure_mode"] == "off"
+
+
+# (g) exposure > 1 on a non-MARGIN account ---------------------------------------
+
+@pytest.mark.parametrize("acct_type", ["CASH", ""])
+def test_exposure_above_one_requires_margin_account(monkeypatch, tmp_path, fake_clock, acct_type):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot(acct_type=acct_type)],
+                    dial=dial_rows(target_exposure=1.2), quotes=TWO_ETF_QUOTES)
+    with pytest.raises(sst.TradingError, match="MARGIN"):
+        h.run("--live", "--confirm-live")
+    assert h.client.place_order_calls == []
+    assert h.marker() is None
+
+
+def test_non_margin_account_only_warns_at_exposure_one(capsys):
+    assert sst.check_margin_account(account_snapshot(acct_type="CASH"), 1.0) == "CASH"
+    assert "WARNING" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bp", [None, float("nan")], ids=["missing", "nan"])
+def test_exposure_above_one_without_buying_power_field_errors(monkeypatch, tmp_path, fake_clock, bp):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot(buying_power=bp)],
+                    dial=dial_rows(target_exposure=1.5), quotes=TWO_ETF_QUOTES)
+    with pytest.raises(sst.TradingError, match="buyingPower.*missing"):
+        h.run("--live", "--confirm-live")
+    assert h.client.place_order_calls == []
+
+
+@pytest.mark.parametrize("post_sell_bp", [None, float("nan")], ids=["missing", "nan"])
+def test_buying_power_missing_after_sells_aborts_buys_not_cash_fallback(monkeypatch, tmp_path, fake_clock, post_sell_bp):
+    initial = account_snapshot({"EWH": (5_000, 100_000.0)}, cash=900_000.0, buying_power=3 * LV)
+    post_sell = account_snapshot(cash=LV, buying_power=post_sell_bp)
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[initial, post_sell],
+                    dial=dial_rows(target_exposure=1.5), quotes={**TWO_ETF_QUOTES, "EWH": (20.00, 20.02)})
+    h.run("--live", "--confirm-live")
+    assert h.orders("SELL") == {"EWH": 5_000}
+    assert h.orders("BUY") == {}
+    assert h.marker()["status"] == "SELLS_DONE_BUYS_ABORTED"
+    assert "missing from the re-fetched account details" in h.marker()["abort_reason"]
+
+
+# (h) leverage guard ----------------------------------------------------------------
+
+def test_leverage_guard_trip_submits_no_buys(monkeypatch, tmp_path, fake_clock):
+    """The post-sell refetch still shows the sold EWH position (stale/phantom
+    holdings). Country book + planned buys would then be ~1.47x of account
+    value at exposure 1.0 -> the guard must abort the buy phase."""
+    initial = account_snapshot({"EWH": (25_000, 500_000.0)}, cash=500_000.0)
+    post_sell = account_snapshot({"EWH": (25_000, 500_000.0)}, cash=LV)
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[initial, post_sell],
+                    dial=dial_rows(target_exposure=1.0), quotes={**TWO_ETF_QUOTES, "EWH": (20.00, 20.02)})
+    h.run("--live", "--confirm-live")
+
+    assert h.orders("SELL") == {"EWH": 25_000}
+    assert h.orders("BUY") == {}, "no buys may be submitted after the leverage guard trips"
+    m = h.marker()
+    assert m["status"] == "SELLS_DONE_BUYS_ABORTED"
+    assert "LEVERAGE GUARD" in m["abort_reason"] and "MANUAL_REQUIRED" in m["abort_reason"]
+
+
+def test_leverage_guard_not_applied_in_off_mode(monkeypatch, tmp_path, fake_clock):
+    """off keeps the pre-dial flow: the same phantom-holdings scenario buys."""
+    initial = account_snapshot({"EWH": (25_000, 500_000.0)}, cash=500_000.0)
+    post_sell = account_snapshot({"EWH": (25_000, 500_000.0)}, cash=LV)
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[initial, post_sell],
+                    dial=None, quotes={**TWO_ETF_QUOTES, "EWH": (20.00, 20.02)})
+    h.run("--live", "--confirm-live", "--exposure-mode", "off")
+    assert set(h.orders("BUY")) == {"EWZ", "EWJ"}
+    assert h.marker()["status"] == "COMPLETED"
+
+
+def test_check_leverage_guard_unit():
+    buys = pd.DataFrame([{"Symbol": "EWZ", "Action": "BUY", "Shares to Trade": 100.0, "Trade Dollars": 1_000_000.0}])
+    empty = pd.DataFrame(columns=["Symbol", "Market Value", "Long Quantity"])
+    held = pd.DataFrame([{"Symbol": "EWJ", "Market Value": 700_000.0, "Long Quantity": 1.0}])
+    snaxx = pd.DataFrame([{"Symbol": "SNAXX", "Market Value": 1_500_000.0, "Long Quantity": 1.0}])
+    # 1.0M + 0.7M = 1.7M vs 1.7 x 1M x 1.02 = 1.734M -> passes
+    assert sst.check_leverage_guard(buys, held, LV, 1.7) is None
+    # same book at exposure 1.5 -> country limit 1.53M breached
+    assert "exposure 1.50" in sst.check_leverage_guard(buys, held, LV, 1.5)
+    # SNAXX is excluded from the country limit but counts toward MAX_EXPOSURE
+    reason = sst.check_leverage_guard(buys, snaxx, LV, 1.0)
+    assert reason is not None and "MAX_EXPOSURE" in reason and "country book" not in reason
+    assert sst.check_leverage_guard(buys, empty, LV, 1.0) is None
+
+
+# (i) liquidity cap AUM ---------------------------------------------------------------
+
+@pytest.mark.parametrize("mode,exposure,expected_aum", [
+    ("dial", 1.7, 1.7 * LV),
+    ("dial", 0.4, 0.4 * LV),
+    ("off", 1.7, LV),  # off ignores the dial entirely
+])
+def test_liquidity_cap_receives_aum_times_exposure(monkeypatch, tmp_path, fake_clock, mode, exposure, expected_aum):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot()], dial=dial_rows(target_exposure=exposure),
+                    quotes=TWO_ETF_QUOTES)
+    h.run("--exposure-mode", mode)  # dry run, cap ON (default)
+    assert len(h.cap_calls) == 1
+    assert h.cap_calls[0]["aum"] == pytest.approx(expected_aum)
+
+
+def test_audit_trail_in_plan_and_execution_log(monkeypatch, tmp_path, fake_clock):
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS,
+                    details_sequence=[account_snapshot()], dial=dial_rows(target_exposure=1.3, breadth=0.65),
+                    quotes=TWO_ETF_QUOTES)
+    h.run("--live", "--confirm-live")
+    plan_x = pd.read_excel(next(h.out_dir.glob("schwab_trade_plan_*.xlsx")), sheet_name="Exposure")
+    log_x = pd.read_excel(next(h.out_dir.glob("schwab_execution_log_*.xlsx")), sheet_name="Run Info")
+    audit_keys = {"exposure_mode", "target_exposure", "breadth", "asof_date", "computed_at"}
+    for frame in (plan_x, log_x):
+        info = dict(zip(frame["Key"], frame["Value"]))
+        assert audit_keys <= set(info)
+        assert info["exposure_mode"] == "dial"
+        assert float(info["target_exposure"]) == 1.3
+        assert float(info["breadth"]) == 0.65
+    assert set(dict(zip(plan_x["Key"], plan_x["Value"]))) == audit_keys
+    log_info = dict(zip(log_x["Key"], log_x["Value"]))
+    assert float(log_info["buying_power"]) == 3 * LV  # exposure > 1 records its funding
+
+
+# Verifier follow-ups (2026-09-27) --------------------------------------------------
+
+@pytest.mark.parametrize("post_sell_bp", [30_000.0, -10_000.0, 30_005.0], ids=["equal-reserve", "negative", "dust"])
+def test_buying_power_exhausted_after_sells_aborts_manual_required(monkeypatch, tmp_path, fake_clock, post_sell_bp):
+    """buyingPower <= the 3% reserve (or so little that every BUY floors to 0
+    shares) must abort the buy leg loudly, never report COMPLETED with no buys."""
+    initial = account_snapshot({"EWH": (5_000, 100_000.0)}, cash=900_000.0, buying_power=3 * LV)
+    post_sell = account_snapshot(cash=LV, buying_power=post_sell_bp)
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[initial, post_sell],
+                    dial=dial_rows(target_exposure=1.5), quotes={**TWO_ETF_QUOTES, "EWH": (20.00, 20.02)})
+    h.run("--live", "--confirm-live")
+    assert h.orders("SELL") == {"EWH": 5_000}
+    assert h.orders("BUY") == {}
+    m = h.marker()
+    assert m["status"] == "SELLS_DONE_BUYS_ABORTED"
+    assert "BUYING POWER EXHAUSTED" in m["abort_reason"] and "MANUAL_REQUIRED" in m["abort_reason"]
+    assert m["buying_power"] == post_sell_bp
+
+
+def test_leverage_guard_slack_is_absolute_five_pct_of_account():
+    empty = pd.DataFrame(columns=["Symbol", "Market Value", "Long Quantity"])
+    def buys(dollars):
+        return pd.DataFrame([{"Symbol": "EWZ", "Action": "BUY", "Shares to Trade": 1.0, "Trade Dollars": dollars}])
+    assert sst.LEVERAGE_GUARD_SLACK_PCT == 0.05
+    for exposure in (0.5, 1.0, 1.7):
+        limit = (exposure + 0.05) * LV
+        assert sst.check_leverage_guard(buys(limit - 1.0), empty, LV, exposure) is None
+        assert "country book" in sst.check_leverage_guard(buys(limit + 1.0), empty, LV, exposure)
+    # The MAX_EXPOSURE ceiling has no slack: 1.97x + 0.04x SNAXX = 2.01x trips it
+    # even though the country book (1.97x) is inside 1.95 + 0.05.
+    snaxx = pd.DataFrame([{"Symbol": "SNAXX", "Market Value": 0.04 * LV, "Long Quantity": 1.0}])
+    reason = sst.check_leverage_guard(buys(1.97 * LV), snaxx, LV, 1.95)
+    assert reason is not None and "MAX_EXPOSURE" in reason and "country book" not in reason
+
+
+def _half_exposure_unfilled_sell_scenario(monkeypatch, tmp_path, unfilled_shares, run_name, residue_mv=None):
+    """Fully invested in EWH (50,000 sh @ $20), dial 0.5 rotates into EWZ/EWJ.
+    The EWH sell leaves `unfilled_shares` unfilled (wide spread blocks the
+    market-order cleanup); the post-sell snapshot shows that residue."""
+    left = unfilled_shares
+    residue = left * 20.0 if residue_mv is None else residue_mv
+    initial = account_snapshot({"EWH": (50_000, 1_000_000.0)}, cash=0.0)
+    post_sell = account_snapshot({"EWH": (left, residue)}, cash=LV - residue)
+    h = MainHarness(monkeypatch, tmp_path, weights=TWO_ETF_WEIGHTS, details_sequence=[initial, post_sell],
+                    dial=dial_rows(target_exposure=0.5),
+                    quotes={**TWO_ETF_QUOTES, "EWH": (19.90, 20.10)}, run_name=run_name)
+    h.client.queue_script("EWH", "SELL", OrderScript(
+        poll_sequence=[("WORKING", 50_000 - left)],
+        post_cancel_status="CANCELED", post_cancel_filled_qty=50_000 - left,
+    ))
+    h.run("--live", "--confirm-live")
+    return h
+
+
+def test_half_exposure_with_4pct_unfilled_sells_still_buys(monkeypatch, tmp_path, fake_clock):
+    """4% of the sell notional unfilled (under the 5% sell-abort threshold):
+    residue $40k + buys ~$485k = ~0.525x LV. The old 2%-of-exposure slack
+    (limit 0.51x) tripped here; the absolute 5% slack (0.55x) must not."""
+    h = _half_exposure_unfilled_sell_scenario(monkeypatch, tmp_path, 2_000, "four_pct")
+    assert not [c for c in h.client.place_order_calls if c.get("orderType") == "MARKET"], (
+        "cleanup must be skipped (wide spread), leaving the 2,000-share residue")
+    assert h.marker()["sell_total_filled"] == 48_000
+    assert set(h.orders("BUY")) == {"EWZ", "EWJ"}
+    assert h.marker()["status"] == "COMPLETED"
+
+
+def test_half_exposure_well_over_limit_trips_guard(monkeypatch, tmp_path, fake_clock):
+    """Same flow, but the post-sell snapshot shows a residue worth 0.2x LV
+    (e.g. stale/phantom position): 0.2x + ~0.485x buys > 0.55x -> abort."""
+    h = _half_exposure_unfilled_sell_scenario(monkeypatch, tmp_path, 2_000, "over", residue_mv=200_000.0)
+    assert h.orders("BUY") == {}
+    m = h.marker()
+    assert m["status"] == "SELLS_DONE_BUYS_ABORTED"
+    assert "LEVERAGE GUARD" in m["abort_reason"]
 
 
 if __name__ == "__main__":

@@ -37,18 +37,26 @@ Use the command list in `CLAUDE.md`. The key scripts are:
 - `Step Six Point Five.py`
 - `Step Eight Write Country Weights.py`
 - `Step Nine Calculate Portfolio Returns.py`
-- `Step Ten Create Final Report.py`
 - `Step Fourteen Target Optimization.py`
+- `Step FINALFINAL.py`
+- `Step Ten Exposure Dial.py` — runs LAST, after `Step FINALFINAL.py`; replaces the deleted
+  `Step Ten Create Final Report.py`
 
 ### Run the Schwab trading engine
-Dry run:
+Dry run (dial mode, default):
 ```bash
 python "Step Schwab Trading.py"
 ```
 
-Live mode:
+Dry run, dial off (pre-exposure-dial behavior):
 ```bash
-python "Step Schwab Trading.py" --live --confirm-live
+python "Step Schwab Trading.py" --exposure-mode off
+```
+
+Live mode — dial mode is refused until `EXPOSURE_DIAL_LIVE_APPROVED` is set True in the script;
+use `--exposure-mode off` for a standard live rebalance until then:
+```bash
+python "Step Schwab Trading.py" --live --confirm-live --exposure-mode off
 ```
 
 ## Safety checks before changing or running live trading
@@ -69,9 +77,27 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 - `T2_Final_Country_Weights.xlsx`
 - `T2_Final_Portfolio_Returns.xlsx`
 - `T2_Strategy_Report_Comprehensive_*.pdf`
+- `T2_FINAL_T60_VALUE.xlsx` — target workbook the trader reads; Step Ten adds `Exposure_Dial`
+  (key/value, read by the trader) and `Exposure_Detail` sheets to this same file
+- `T2_exposure_dial_log.txt` — appended audit line per Step Ten run (breadth, target_exposure, as-of date)
 - `outputs/schwab_trade_plan_*.xlsx`
 - `outputs/schwab_execution_log_*.xlsx`
 - `outputs/schwab_live_marker_*.json`
+
+## Monthly operating procedure
+1. Refresh the monthly **and** daily Bloomberg master files through month-end.
+2. Run the pipeline (`Run_All_Pipeline.py` or `Run_Limited_Pipeline.py`) — `Step Ten Exposure
+   Dial.py` runs last.
+3. Dry-run the trader in dial mode and review the plan (target exposure, buying power, largest orders).
+4. Live rebalance with `--exposure-mode off` until `EXPOSURE_DIAL_LIVE_APPROVED` is set True.
+
+## Trader exposure mode
+`Step Schwab Trading.py` takes `--exposure-mode {dial,off}` (default `dial`). In `dial` mode the
+trader reads `target_exposure` from the `Exposure_Dial` sheet Step Ten writes and scales the
+country book to that fraction (0%-200%) of account value — above 100% draws on margin buying
+power, below 100% leaves the rest in cash. `off` reproduces the pre-dial trader exactly. Dial
+validation errors (missing sheet, out-of-range values, a stale as-of or computed_at date) are
+hard errors.
 
 ## Repository maintenance notes
 - `Archive/` holds retired or superseded scripts and should usually be left alone.

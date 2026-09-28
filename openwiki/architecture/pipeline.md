@@ -23,15 +23,19 @@ The main sequence is reflected in `Run_All_Pipeline.py` and the command list in 
 10. `Step Eight Write Country Weights.py`
 11. `Step Eight Point Five Write Country Weights US Adjustment.py`
 12. `Step Nine Calculate Portfolio Returns.py`
-13. `Step Ten Create Final Report.py`
-14. `Step Fourteen Target Optimization.py`
-15. `Step Fifteen Market Regime Analysis.py`
-16. `Step Sixteen Market Regime Analysis.py`
-17. `Step Seventeen Market Regime Analysis.py`
-18. `Step Eighteen Asset Class Charts.py`
-19. `Step Twenty PORCH.py`
-20. `Step Twenty One Master Report.py`
-21. `Step FINALFINAL.py`
+13. `Step Fourteen Target Optimization.py`
+14. `Step Fifteen Market Regime Analysis.py`
+15. `Step Sixteen Market Regime Analysis.py`
+16. `Step Seventeen Market Regime Analysis.py`
+17. `Step Eighteen Asset Class Charts.py`
+18. `Step Twenty PORCH.py`
+19. `Step Twenty One Master Report.py`
+20. `Step FINALFINAL.py`
+21. `Step Ten Exposure Dial.py` — runs LAST, after `Step FINALFINAL.py`. Replaces the old
+    `Step Ten Create Final Report.py` (a PDF report generator), which is deleted. Computes
+    breadth (share of 34 country indices above their 200-day EMA at the last completed
+    month-end) from the daily Bloomberg file, sets `target_exposure = clip(2 x breadth, 0, 2)`,
+    and writes `Exposure_Dial` + `Exposure_Detail` sheets into `T2_FINAL_T60_VALUE.xlsx`.
 
 `Run_Limited_Pipeline.py` is a shorter runner for later-stage reruns.
 
@@ -55,7 +59,6 @@ The main sequence is reflected in `Run_All_Pipeline.py` and the command list in 
 - **Step Eight**: converts factor weights into country weights.
 - **Step Eight Point Five**: applies a US-specific adjustment variant.
 - **Step Nine**: computes portfolio returns from country weights.
-- **Step Ten**: assembles the final report artifacts.
 
 ### Downstream analysis and reporting
 - **Step Fourteen**: optimizes country weights.
@@ -63,6 +66,9 @@ The main sequence is reflected in `Run_All_Pipeline.py` and the command list in 
 - **Step Eighteen**: asset class charts.
 - **Step Twenty** and **Step Twenty One**: higher-level report assembly.
 - **Step FINALFINAL**: final wrap-up artifact generation.
+- **Step Ten (Exposure Dial)**: runs LAST, after Step FINALFINAL; sets the trader's target
+  exposure (0-200% of account value) from 34-country market breadth and writes it into
+  `T2_FINAL_T60_VALUE.xlsx` for `Step Schwab Trading.py` to read.
 
 ## The most important file contracts
 
@@ -85,7 +91,7 @@ The output format must stay compatible with downstream scripts, especially Step 
 - `Step Fourteen Target Optimization.py` (and the LongShort variant) read the same exposure file.
 - The market-regime scripts (Fifteen/Sixteen/Seventeen) consume it for factor attribution.
 
-`T2 Top20.xlsx` carries the IR-sorted performance tables; its `Full_Sample` sheet is the default read for Step Ten's report table, while the trailing `Trailing_1Y` / `Trailing_3Y` / `Trailing_5Y` sheets provide windowed views on the benchmark calendar. Changing the exposure CSV's column order, date format, or weight semantics breaks Step Six and the optimizers, so treat it as a stable contract.
+`T2 Top20.xlsx` carries the IR-sorted performance tables; its `Full_Sample` sheet is the default read for the old final-report step (now removed), while the trailing `Trailing_1Y` / `Trailing_3Y` / `Trailing_5Y` sheets provide windowed views on the benchmark calendar. Changing the exposure CSV's column order, date format, or weight semantics breaks Step Six and the optimizers, so treat it as a stable contract.
 
 ### Step Eight and Step Nine contract
 `step_fuzzy_bands.py` exists to keep factor-to-country band logic consistent across Step Four and Step Eight. That matters because Step Four produces factor-level returns while Step Eight consumes the same logic for country weights.
