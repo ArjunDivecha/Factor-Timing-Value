@@ -42,6 +42,7 @@ CHART HISTORY: for each country the chart uses the ETF's adjusted close from the
     0.993, 1 month of 308 differing by more than 25 points; and vs the research ETF dial since 2012: 1.000.
 
 INPUT FILES:
+    <repo>/T2_Final_Portfolio_Returns.xlsx  sheet 'Monthly Returns' col 'Portfolio' (Step Nine; the unlevered base)
     <repo>/AssetList.xlsx              sheet 'Yahoo' (34 country ETF tickers, trader order)
     <repo>/T2_FINAL_T60_VALUE.xlsx           sheet 'Latest_Country_Alpha_Weights' (Step FINALFINAL output)
     Yahoo Finance daily prices via yfinance (downloaded at run time, dividend-adjusted)
@@ -53,15 +54,20 @@ OUTPUT FILES:
     <repo>/T2_FINAL_T60_VALUE.xlsx  sheets added/replaced:
         'Exposure_Dial'   key/value table read by the trader (target_exposure, asof_date, breadth, ...)
         'Exposure_Detail' per-country ETF, adjusted close, EMA200, above/valid flags, base and scaled weight
+        'Dial_Performance' stats: unlevered vs dial (full sample, since 2012, last 10y, last 5y)
+        'Dial_Monthly'    the monthly returns and exposure behind those stats
     <repo>/outputs/exposure_dial_prices_YYYYMMDD.parquet   the exact prices used (audit trail)
     <repo>/T2_exposure_dial_log.txt   one appended line per run
     <repo>/T2_exposure_dial_history.pdf   chart of the dial (leverage) over time, 2000 to today; overwritten
                                           each run. Uses the ETF prices; before an ETF existed it uses the
                                           Bloomberg index (see CHART HISTORY below)
+    <repo>/T2_exposure_dial_performance.pdf   growth of $1 and drawdown, unlevered vs dial (helper module
+                                          step_dial_performance.py explains the monthly accounting)
 
     (<repo> = /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value)
 
-VERSION: 2.2 (2026-10-01) — adds the leverage-over-time chart (T2_exposure_dial_history.pdf), back to 2000;
+VERSION: 2.3 (2026-10-01) — adds unlevered-vs-dial performance chart + stats (step_dial_performance.py).
+    2.2 (2026-10-01) — adds the leverage-over-time chart (T2_exposure_dial_history.pdf), back to 2000;
     price download window 5y -> max. Pre-ETF history comes from the Bloomberg daily total-return index. 2.1 (2026-09-30) — as-of = latest completed yfinance close instead of the previous month-end;
     fails if the latest close is more than 4 days old. 2.0 (2026-09-28) — yfinance ETF prices replace the daily Bloomberg file. 1.0 (2026-09-27)
     read 'Country Bloomberg Data Master T Daily.xlsx'.
@@ -98,6 +104,9 @@ MAX_ASOF_GAP_DAYS = 4        # latest yfinance close must be within 4 calendar d
 MARKET_CLOSE_ET = (16, 5)    # today's bar counts as complete only after 4:05pm US/Eastern
 HISTORY_PERIOD = "max"       # yfinance download window (EMA warm-up, 200-day validity, and the chart history)
 CHART_NAME = "T2_exposure_dial_history.pdf"
+PERF_CHART_NAME = "T2_exposure_dial_performance.pdf"
+PERF_SHEET = "Dial_Performance"
+PERF_MONTHLY_SHEET = "Dial_Monthly"
 # Bloomberg daily total-return indices: used ONLY to extend the CHART back before each ETF existed
 # (the dial itself uses the ETF prices only). Columns are positional, in COUNTRIES order; row 0
 # holds the Bloomberg field names.
@@ -361,6 +370,7 @@ def main():
     # Leverage-over-time chart. The dial is already written above, so a chart problem is reported
     # loudly but does not undo or block the dial.
     chart_file = final_path.parent / CHART_NAME
+    hist = None
     try:
         try:
             hist_px, n_etf = splice_etf_and_bloomberg(px, load_bloomberg_tri(), tickers)
@@ -374,6 +384,30 @@ def main():
         print(f"  leverage history chart ({hist.index[0].date()}..{hist.index[-1].date()}): {chart_file}")
     except Exception as exc:
         print(f"  WARNING: leverage chart NOT written: {exc}", file=sys.stderr)
+        hist = None
+
+    # Unlevered vs dial performance (chart + stats). Also non-blocking: the dial is already written.
+    if hist is not None:
+        try:
+            from step_dial_performance import (build_monthly, performance_table, plot_performance,
+                                               write_performance_sheets)
+            monthly = build_monthly(hist["exposure"], final_path.parent / "T2_Final_Portfolio_Returns.xlsx")
+            table = performance_table(monthly)
+            perf_file = final_path.parent / PERF_CHART_NAME
+            plot_performance(monthly, perf_file, STRATEGY_LABEL, table)
+            with pd.ExcelWriter(final_path, mode="a", engine="openpyxl", if_sheet_exists="replace") as xw:
+                write_performance_sheets(xw, table, monthly, PERF_SHEET, PERF_MONTHLY_SHEET)
+            print(f"  dial performance {monthly.index[0]:%b %Y}..{monthly.index[-1]:%b %Y} "
+                  f"(monthly, gross, margin at T-bill + 0.42%):")
+            show = table[["Period", "Strategy", "Ann. return (CAGR)", "Ann. volatility",
+                          "Sharpe (excess over T-bill)", "Max drawdown"]].copy()
+            for c in ["Ann. return (CAGR)", "Ann. volatility", "Max drawdown"]:
+                show[c] = show[c].map("{:.1%}".format)
+            show["Sharpe (excess over T-bill)"] = show["Sharpe (excess over T-bill)"].map("{:.2f}".format)
+            print("    " + show.to_string(index=False).replace("\n", "\n    "))
+            print(f"  performance chart: {perf_file}; stats in sheets [{PERF_SHEET}, {PERF_MONTHLY_SHEET}]")
+        except Exception as exc:
+            print(f"  WARNING: dial performance NOT written: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
