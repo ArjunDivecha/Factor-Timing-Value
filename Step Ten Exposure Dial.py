@@ -11,7 +11,8 @@ DESCRIPTION:
     Arjun 2026-09-27; data source switched to yfinance 2026-09-28):
         breadth         = share of the 34 country ETFs (the trader's own tickers, AssetList.xlsx
                           sheet 'Yahoo') whose dividend-adjusted close is above its 200-day EMA
-                          at the close of the last completed month
+                          at the LATEST completed yfinance close (changed 2026-09-30: no longer
+                          the previous month-end; today's bar is ignored until after 4:05pm ET)
         target_exposure = clip(DIAL_LOW + (DIAL_HIGH - DIAL_LOW) * breadth, DIAL_LOW, DIAL_HIGH)
                         = 2 x breadth with the defaults (0% .. 200% of account value)
     The trader scales the country book (the weights in Latest_Country_Alpha_Weights, which sum
@@ -30,7 +31,7 @@ DESCRIPTION:
 
     Runs AFTER Step FINALFINAL (it adds sheets to FINALFINAL's output). It stops loudly
     (non-zero exit, nothing written to the workbook) if the yfinance download fails or is
-    incomplete, if the prices do not reach the last month-end, if AssetList.xlsx does not have
+    incomplete, if the latest close is more than 4 days old, if AssetList.xlsx does not have
     34 tickers, or if fewer than MIN_VALID ETFs have a 200-day history. There is no fallback
     data source.
 
@@ -48,7 +49,8 @@ OUTPUT FILES:
 
     (<repo> = /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value)
 
-VERSION: 2.0 (2026-09-28) — yfinance ETF prices replace the daily Bloomberg file. 1.0 (2026-09-27)
+VERSION: 2.1 (2026-09-30) — as-of = latest completed yfinance close instead of the previous month-end;
+    fails if the latest close is more than 4 days old. 2.0 (2026-09-28) — yfinance ETF prices replace the daily Bloomberg file. 1.0 (2026-09-27)
     read 'Country Bloomberg Data Master T Daily.xlsx'.
 AUTHOR: Claude Code (replaces the former 'Step Ten Create Final Report.py')
 
@@ -64,6 +66,7 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -78,7 +81,8 @@ DIAL_LOW = 0.0
 DIAL_HIGH = 2.0
 EMA_SPAN = 200
 MIN_VALID = 30
-MAX_ASOF_GAP_DAYS = 4        # prices must reach within 4 calendar days of the month's last day
+MAX_ASOF_GAP_DAYS = 4        # latest yfinance close must be within 4 calendar days of today
+MARKET_CLOSE_ET = (16, 5)    # today's bar counts as complete only after 4:05pm US/Eastern
 HISTORY_PERIOD = "5y"        # yfinance download window (EMA warm-up plus 200-day validity)
 ASSET_LIST_PATH = REPO / "AssetList.xlsx"
 DIAL_SHEET = "Exposure_Dial"
@@ -129,26 +133,31 @@ def download_prices(tickers):
     return px.where(px > 0)
 
 
+def drop_partial_today_bar(px, today, use_real_clock):
+    """yfinance includes today's still-forming bar while the US market is open. Drop it so the
+    signal always uses a completed close. Only applies with the real clock (not --today tests)."""
+    if not use_real_clock:
+        return px
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    if px.dropna(how="all").index.max() == pd.Timestamp(now_et.date()) and \
+            (now_et.hour, now_et.minute) < MARKET_CLOSE_ET:
+        return px.loc[px.index < pd.Timestamp(now_et.date())]
+    return px
+
+
 def resolve_asof(px, asof_arg, today):
+    """As-of row = the LATEST completed yfinance close (not the previous month-end).
+    --asof picks the last available close on or before that date instead."""
     last = px.dropna(how="all").index.max()
     if asof_arg:
-        asof = pd.Timestamp(asof_arg)
-    else:
-        month_end_of_last = last + pd.offsets.BMonthEnd(0)
-        if last == month_end_of_last and last.to_period("M") == today.to_period("M") and last < today:
-            target_month = today.to_period("M")          # run after the month's last trading day
-        else:
-            target_month = today.to_period("M") - 1      # normal: previous calendar month
-        asof = target_month.to_timestamp(how="end").normalize()
-    month_rows = px.index[(px.index.to_period("M") == asof.to_period("M")) & (px.index <= asof)]
-    if len(month_rows) == 0:
-        raise DialError(f"no prices in the as-of month {asof.to_period('M')} (latest {last.date()})")
-    asof_row = month_rows.max()
-    month_last_day = asof.to_period("M").to_timestamp(how="end").normalize()
-    if asof_arg is None and (month_last_day - asof_row).days > MAX_ASOF_GAP_DAYS:
-        raise DialError(f"prices end {asof_row.date()}, more than {MAX_ASOF_GAP_DAYS} days before month-end "
-                        f"{month_last_day.date()}")
-    return asof_row, last
+        rows = px.dropna(how="all").index[px.dropna(how="all").index <= pd.Timestamp(asof_arg)]
+        if len(rows) == 0:
+            raise DialError(f"no prices on or before {asof_arg} (latest {last.date()})")
+        return rows.max(), last
+    if (today - last).days > MAX_ASOF_GAP_DAYS:
+        raise DialError(f"latest yfinance close is {last.date()}, more than {MAX_ASOF_GAP_DAYS} days "
+                        f"before today ({today.date()}) — data is stale")
+    return last, last
 
 
 def compute_breadth(px, asof_row):
@@ -187,6 +196,7 @@ def main():
     c2t = load_tickers()
     tickers = [c2t[c] for c in COUNTRIES]
     px = download_prices(tickers)
+    px = drop_partial_today_bar(px, today, use_real_clock=args.today is None)
     asof_row, last = resolve_asof(px, args.asof, today)
     breadth, n_above, n_valid, detail = compute_breadth(px, asof_row)
     exposure = float(np.clip(DIAL_LOW + (DIAL_HIGH - DIAL_LOW) * breadth, DIAL_LOW, DIAL_HIGH))
