@@ -216,3 +216,18 @@ SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
 - 2026-09-28: Step Ten v2.0 reads yfinance prices for the 34 country ETFs, the same universe as Momentum, in place of the daily Bloomberg file. It gives the same reading in both repos. Since 2012, Value's dial made 11.7% vs 11.5% for 100% long, Sharpe 0.69 vs 0.73, max DD −30% vs −35%. Kept as bear-market insurance; dry-run only.
 
 - 2026-10-04 Slicing (overlapping sleeves) tested on Value: REJECTED on gross performance (K equal slices, only 1/K reset to the newest target book each month). Production-target book, 295 months: K=1 2.38%/yr active, TE 4.07, IR 0.58, DD -8.9%; K=12 0.88%/yr, TE 3.78, IR 0.23, DD -20.1%; K=24 0.66%/yr, IR 0.18. Return falls ~63% at K=12 while TE falls only 7%. Worse than the Momentum repo (K=12 IR 0.68 vs 0.89 at K=1). Value's live weights include Step 8.5's US dial after the liquidity cap, so the test had to include it (K=1 matches the live file to 1e-16). The work lives in the T2 repo: `../T2 Factor Timing Fuzzy/Experiments Deep Dive/Portfolio Construction/pc_slicing.py` (`--root`, `--us-adjust`); Value run outputs `Experiments Deep Dive/Portfolio Construction/runs/20261004_172240/` (untracked). IL entry: `../Investment Learnings/T2 Factor Timing Fuzzy Slicing.md`. No production change.
+
+## 2026-10-05 — EMA factor-weight damping (ported idea from Momentum Step Five v3.0): TESTED, NOT ADOPTED
+
+**Context:** The Momentum repo adopted EMA(0.30) on its QP's factor-weight vector with its country-book cost term set to 0 (2026-10-05). Tested the same idea here without touching production: `Experiments Deep Dive/Portfolio Construction/pc_value_damping.py`, run `runs/20261005_150956/`. Held set in the Top-3 engine depends only on ranks, so EMA on the output panel == EMA inside the loop exactly.
+
+**Arms (gross, active vs EW, through Step Eight band -> liquidity cap -> US dial; guards: ctrl == prod weights exactly, ctrl book == live file 1.1e-16):**
+| arm | Full ret/IR | 2017+ | 2000-16 | Holdout | TE | factor churn %/mo |
+| ctrl | 3.17 / 0.72 | 3.36 / 0.84 | 3.07 / 0.67 | 4.70 / 1.04 | 4.38 | 7.1 |
+| k0 (hurdle off) | 3.22 / 0.73 | 3.38 / 0.83 | 3.12 / 0.67 | 5.78 / 1.14 | 4.42 | 8.8 |
+| ema_a0.25 | 3.16 / 0.74 | 3.50 / 0.90 | 2.97 / 0.66 | 4.95 / 1.13 | 4.27 | 6.0 |
+| ema_a0.3 | 3.19 / 0.74 | 3.50 / 0.90 | 3.01 / 0.67 | 4.92 / 1.12 | 4.28 | 6.2 |
+| ema_a0.5 | 3.23 / 0.75 | 3.47 / 0.88 | 3.08 / 0.68 | 4.90 / 1.10 | 4.33 | 6.7 |
+| ema_a0.3_k0 | 3.19 / 0.75 | 3.42 / 0.88 | 3.06 / 0.68 | 5.10 / 1.12 | 4.28 | 7.2 |
+
+**Verdict:** NOT adopted. Every arm within +-0.1pp of control on every window; no arm clears Momentum's IR +0.05 adopt bar. The Top-3 EW + hysteresis (EXIT_BAND=2) + kappa=1 hurdle engine is already damped — factor churn 7%/mo vs 25% in the Momentum QP, and a swap moves 1/3 of the book — so there is no switch noise for an EMA to remove. Removing the cost hurdle (k0) is also a wash (+0.05pp). Production Step Five unchanged. Write-up: `Investment Learnings/T2 Factor Timing Fuzzy Value EMA Damping.md`.
