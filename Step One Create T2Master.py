@@ -754,31 +754,17 @@ def process_excel_file() -> None:
         sheet_names = excel_file.sheet_names[1:]  # Skip first sheet
         process_sheets = [sheet for sheet in sheet_names if 'Mcap' not in sheet]
         
-        # Process P2P data first
+        # Process P2P data first (map ETF ticker columns → countries; never by position)
         logger.info("Processing P2P data")
         try:
-            # Read P2P data
-            p2p_data = pd.read_excel(p2p_file, engine='openpyxl')
-            
-            # Replace headers with country names
-            if len(p2p_data.columns) <= len(country_names):
-                p2p_data.columns = country_names[:len(p2p_data.columns)]
-            else:
-                logger.warning("P2P data has more columns than available country names")
-                raise ValueError("P2P data has more columns than expected")
-            
-            # Keep original dates from P2P file instead of replacing them
-            # Convert to datetime for consistency but don't standardize
-            if 'Country' in p2p_data.columns:
-                p2p_data['Country'] = pd.to_datetime(p2p_data['Country'], errors='coerce')
-                logger.info("Using original dates from P2P input file")
-                
-                # Delete the first row to align dates with other files
-                p2p_data = p2p_data.iloc[1:].reset_index(drop=True)
-                logger.info("Deleted first row of P2P data to align dates with other files")
-            else:
-                logger.warning("No 'Country' column found in P2P data, date handling may be incorrect")
-            
+            from p2p_country_mapping import load_p2p_country_frame_from_excel
+
+            p2p_raw = pd.read_excel(p2p_file, engine='openpyxl')
+            p2p_data = load_p2p_country_frame_from_excel(
+                p2p_raw,
+                asset_list_path='AssetList.xlsx',
+                logger=logger,
+            )
         except Exception as e:
             logger.error(f"Error processing P2P data: {str(e)}")
             raise

@@ -34,6 +34,12 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import warnings
 import matplotlib.pyplot as plt
+
+from p2p_country_mapping import (
+    load_ticker_country_pairs,
+    validate_p2p_excel_column_order,
+)
+
 warnings.filterwarnings("ignore")
 
 ###############################################################################
@@ -403,34 +409,27 @@ def save_historical_p2p_scores(all_prices, tickers, start_date='2000-01-01'):
     # Get data starting 12 months before the requested start date
     data_start_date = start_date - relativedelta(months=12)
     
-    # Initialize DataFrame for P2P scores
-    p2p_scores = pd.DataFrame(index=all_prices.index)
-    
-    # For each month
+    p2p_scores = pd.DataFrame(index=all_prices.index, columns=tickers, dtype=float)
+
     for i in range(12, len(all_prices)):
         current_date = all_prices.index[i]
-        
-        # Calculate P2P scores for all stocks using previous 12 months
-        for ticker in tickers:
-            if ticker in all_prices.columns:
-                price_window = all_prices[ticker].iloc[i-12:i+1]
-                if not price_window.isna().any() and len(price_window) > 1:
-                    score = calculate_p2p_score(price_window)
-                    if score is not None:
-                        p2p_scores.loc[current_date, ticker] = score
-    
-    # Filter dates from start_date onwards
-    p2p_scores = p2p_scores[p2p_scores.index >= start_date]
-    
-    # Reset index to make date a column
-    p2p_scores.reset_index(inplace=True)
-    p2p_scores.rename(columns={'index': 'Unnamed: 0'}, inplace=True)
-    
-    return p2p_scores
 
-# Read tickers and run strategy
-asset_list = pd.read_excel('AssetList.xlsx')
-tickers = [str(ticker).strip().upper() for ticker in asset_list.iloc[:, 0] if pd.notna(ticker)]
+        for ticker in tickers:
+            if ticker not in all_prices.columns:
+                continue
+            price_window = all_prices[ticker].iloc[i - 12 : i + 1]
+            if not price_window.isna().any() and len(price_window) > 1:
+                score = calculate_p2p_score(price_window)
+                if score is not None:
+                    p2p_scores.at[current_date, ticker] = score
+
+    p2p_scores = p2p_scores[p2p_scores.index >= start_date]
+    out = p2p_scores.reset_index().rename(columns={"index": "Date"})
+    return out[["Date"] + list(tickers)]
+
+
+_tick_pairs = load_ticker_country_pairs("AssetList.xlsx")
+tickers = [t for t, _ in _tick_pairs]
 
 # Run strategy
 returns_df, cum_returns, metrics, all_prices = run_strategy(tickers)
@@ -477,7 +476,12 @@ with pd.ExcelWriter(historical_file, engine='xlsxwriter') as writer:
     
     # Adjust column width for better visibility
     worksheet.set_column(date_col_idx, date_col_idx, 12)  # Width for date column
-    worksheet.set_column(1, len(historical_p2p_scores.columns)-1, 8)  # Width for score columns
+    worksheet.set_column(1, len(historical_p2p_scores.columns) - 1, 8)
 
+validate_p2p_excel_column_order(
+    pd.read_excel(historical_file, engine="openpyxl"),
+    "AssetList.xlsx",
+)
 print(f"Successfully saved historical P2P scores to {historical_file}")
+print("Column order validated against AssetList.xlsx (Yahoo sheet).")
 print("Note: Other Excel files and charts were not generated as requested.")
