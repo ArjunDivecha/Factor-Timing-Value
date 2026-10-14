@@ -305,7 +305,7 @@ def calculate_strategy_performance(weights_df, returns_df):
 
     pr = pd.Series(portfolio_returns, index=aligned_dates)
 
-    ann_return = (1 + pr.mean()) ** 12 - 1
+    ann_return = pr.mean() * 12   # arithmetic (2026-10-14)
     ann_vol = pr.std() * np.sqrt(12)
     sharpe = ann_return / ann_vol if ann_vol != 0 else 0
 

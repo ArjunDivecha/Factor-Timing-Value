@@ -185,6 +185,11 @@ final_weights_df = pd.read_excel('T2_Country_Final.xlsx')
 latest_date = adjusted_weights.dropna().index.max() if not adjusted_weights.dropna().empty else adjusted_weights.index[-1]
 latest_weights = adjusted_weights.loc[latest_date]
 
+# 2026-10-14: keep the per-factor contribution columns consistent with the adjusted weights. Each country's
+# contributions are rescaled pro rata to its new weight; the part of a weight not explained by factor contributions
+# (the U.S. sleeve set by the formula above) goes in an explicit 'US Adjustment' column, so every row sums to Weight.
+_factor_cols = [c for c in final_weights_df.columns if c not in ('Country', 'Weight', 'US Adjustment')]
+_old_w = final_weights_df.set_index('Country')['Weight'].copy()
 # Update weights in the final file
 for idx, row in final_weights_df.iterrows():
     country = row['Country']
@@ -195,6 +200,16 @@ for idx, row in final_weights_df.iterrows():
 
 # Update the TOTAL row
 final_weights_df.loc[final_weights_df['Country'] == 'TOTAL', 'Weight'] = final_weights_df['Weight'].sum() - 1.0  # Subtract the TOTAL row itself
+
+_is_total = final_weights_df['Country'] == 'TOTAL'
+_contrib = final_weights_df.loc[~_is_total, _factor_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+_old_sum = _contrib.sum(axis=1)
+_new_w = final_weights_df.loc[~_is_total, 'Weight'].astype(float)
+_scale = (_new_w / _old_sum).where(_old_sum.abs() > 1e-12, 0.0)
+final_weights_df.loc[~_is_total, _factor_cols] = _contrib.mul(_scale, axis=0)
+final_weights_df.loc[~_is_total, 'US Adjustment'] = _new_w - final_weights_df.loc[~_is_total, _factor_cols].sum(axis=1)
+if _is_total.any():
+    final_weights_df.loc[_is_total, _factor_cols + ['US Adjustment']] = final_weights_df.loc[~_is_total, _factor_cols + ['US Adjustment']].sum().values
 
 # Save the updated final weights file
 final_output_file = 'T2_Country_Final.xlsx'

@@ -76,7 +76,7 @@ SPECIAL HANDLING:
    - Financial Indicators: BEST Cash Flow, BEST Div Yield, BEST EPS 3Y, etc.
    - Valuation Metrics: BEST PBK, BEST PE (specific-return reversal), BEST PS, EV/EBITDA, etc.
    - Technical Indicators: RSI, etc.
-   - Economic Indicators: Currency Change, Debt to GDP, REER, 10Yr Bond 12, Bond Yield Change
+   - Economic Indicators: Currency 12, Debt to GDP, REER, 10Yr Bond 12
    - Risk Metrics: Bloom Country Risk
    - For these variables, the normalization is multiplied by -1 to ensure higher values 
      consistently represent better conditions across all variables
@@ -187,20 +187,21 @@ def normalize_data() -> None:
         # and pairing it with 1MRet(May) (the May→Jun return) leaks the very
         # return the signal contains. Shifting P2P by one row makes P2P(May)
         # available only in June, matching the Bloomberg convention.
-        # Best PE: momentum-excluded specific returns; inverted for reversal.
         lag_one_month: List[str] = [
-            'Best PE ',
             'P2P',
         ]
         
         # List of variables to invert normalization (where lower values are better)
         invert_norm: List[str] = [
-            'Best Cash Flow',
-            'Best PBK', 'Best PE ', 'Best Price Sales',
+            # 2026-10-14: names fixed to match the T2 Master sheets ('Debt To EV' and 'Currency Change' never
+            # matched, so those factors were silently NOT inverted); duplicate 'Best Price Sales' and the
+            # non-existent 'Bond Yield Change' removed. 'Currency 12' is now LCU-per-USD (Step One), so lower
+            # = appreciation = better. 'Best PE ' is the forward P/E RATIO (BEST_PE_RATIO), lower = cheaper.
+            'Best Cash Flow', 'Best PBK', 'Best PE ', 'Best Price Sales',
             'EV to EBITDA', 'Shiller PE', 'Trailing PE', 'Positive PE ',
-            'Currency Change', 'Debt to GDP', 'REER', 'RSI14', '10Yr Bond 12',
-            'Advance Decline', '1MTR', '3MTR', 'Debt To EV', 'Best Price Sales',
-             'Bloom Country Risk', 'Bond Yield Change'
+            'Currency 12', 'Debt to GDP', 'REER', 'RSI14', '10Yr Bond 12',
+            'Advance Decline', '1MTR', '3MTR', 'Debt to EV',
+            'Bloom Country Risk',
         ]
         
         # Initialize list to store all tidy data
@@ -286,6 +287,7 @@ def normalize_data() -> None:
         
     except Exception as e:
         print(f"Error processing data: {str(e)}")
+        raise   # 2026-10-14: was swallowed (exit 0), so the runner treated a crash as success
 
 if __name__ == "__main__":
     normalize_data()

@@ -212,10 +212,9 @@ def detect_regime_breaks_sheet(
         when peers are 5–20). This catches long streaks of bad data that
         defeat any time-series window.
 
-    Pass B – Two-sided time-series median filter:
-        For values that survived Pass A, check whether the value deviates
-        from BOTH the preceding and following ts_median_window non-null,
-        non-flagged values by > ts_pct_threshold. This catches isolated
+    Pass B – REMOVED 2026-10-14 (was a two-sided time-series filter, i.e. look-ahead;
+        a trailing-only replacement froze genuine moves). ts_pct_threshold and
+        ts_median_window are now unused. This catches isolated
         spikes/drops that are within the plausible cross-sectional range
         but inconsistent with the country's own history.
 
@@ -253,53 +252,15 @@ def detect_regime_breaks_sheet(
                 if pd.notna(v) and v < floor:
                     is_bad.at[idx, col] = True
         xs_flags = int(is_bad.sum().sum())
+    xs_mask = is_bad.copy()   # Pass A flags only, kept for correct 'detection' labels in the log
 
-    # ── Pass B: Two-sided time-series median filter (on non-flagged data) ──
+    # ── Pass B: REMOVED (2026-10-14, Arjun after the Gemini audit) ──
+    # The original two-sided version compared each value with the FOLLOWING 12 months (look-ahead). A trailing-only
+    # version cannot tell a data glitch from the start of a genuine large move (e.g. P/E spikes when earnings
+    # collapse) and froze real data for months: it doubled the replacements (662 -> 1,461) and cost Momentum
+    # 0.4 pp/yr. With Pass B removed and Pass A kept, Momentum's backtest matches the pre-fix result (2.67 vs 2.68).
+    # Only Pass A (same-month cross-section, no future data) flags values now.
     ts_flags = 0
-    for col in country_cols:
-        vals = numeric_data[col].values.astype('float64')
-        bad_col = is_bad[col].to_numpy(copy=True)
-        nn_idx = np.where(~np.isnan(vals))[0]
-        if len(nn_idx) < 3:
-            continue
-
-        for pos, i in enumerate(nn_idx):
-            if bad_col[i]:
-                continue
-            v = vals[i]
-
-            before_positions = nn_idx[max(0, pos - ts_median_window):pos]
-            before_good = [vals[j] for j in before_positions
-                          if not bad_col[j] and not np.isnan(vals[j])]
-            after_positions = nn_idx[pos + 1:pos + 1 + ts_median_window]
-            after_good = [vals[j] for j in after_positions
-                         if not bad_col[j] and not np.isnan(vals[j])]
-
-            if len(before_good) == 0 and len(after_good) == 0:
-                continue
-
-            med_before = np.median(before_good) if before_good else None
-            med_after = np.median(after_good) if after_good else None
-
-            bad_vs_before = False
-            bad_vs_after = False
-            if med_before is not None and med_before != 0:
-                bad_vs_before = abs((v - med_before) / med_before) > ts_pct_threshold
-            if med_after is not None and med_after != 0:
-                bad_vs_after = abs((v - med_after) / med_after) > ts_pct_threshold
-
-            if len(before_good) == 0:
-                flag = bad_vs_after
-            elif len(after_good) == 0:
-                flag = bad_vs_before
-            else:
-                flag = bad_vs_before and bad_vs_after
-
-            if flag:
-                bad_col[i] = True
-                ts_flags += 1
-
-        is_bad[col] = bad_col
 
     # ── Pass C: Forward-fill bad values with last good value ──
     cleaned = data.copy()
@@ -321,7 +282,7 @@ def detect_regime_breaks_sheet(
                     'index': i,
                     'original_value': float(vals_orig[i]),
                     'replaced_with': float(replacement) if not np.isnan(replacement) else None,
-                    'detection': 'cross-sectional' if i in is_bad.index[is_bad[col]] else 'time-series',
+                    'detection': 'cross-sectional' if bool(xs_mask[col].iloc[i]) else 'time-series',
                 })
                 cleaned.at[i, col] = replacement if not np.isnan(replacement) else np.nan
             else:
@@ -677,6 +638,27 @@ def calculate_commodity_beta_and_scaled_returns(
         logger.error(f"Error calculating commodity betas: {str(e)}")
         raise
 
+# 2026-10-14 (Arjun, after the Gemini audit): the global winsorization (median/MAD over the WHOLE 2000-2026 series)
+# and the local-outlier pass (window includes the next 20 months) both use future data, and winsorizing trending
+# level sheets flat-lined e.g. U.S. Tot Return Index. Disabled. Tested: removing them changed Momentum's backtest by
+# +0.08 pp/yr [-0.25, +0.48]. Forward-only protections kept: ffill, Pass A (same-month cross-section) and the
+# trailing-only Pass B regime-break filter.
+APPLY_TWO_SIDED_CLEANING = False
+
+# Currencies Bloomberg quotes as USD per unit of local currency; everything else is local units per USD.
+DIRECT_QUOTED_CCY = {"EUR", "GBP", "AUD", "NZD"}
+
+
+def to_lcu_per_usd(df: pd.DataFrame, tickers: List[str]) -> pd.DataFrame:
+    """Convert direct-quoted currency columns (USD per LCU) to LCU per USD so every column has the same meaning:
+    a rise = local-currency DEPRECIATION. `tickers` are the raw sheet headers aligned with df.columns."""
+    out = df.copy()
+    for col, tk in zip(df.columns[1:], tickers[1:]):
+        if str(tk).split()[0].upper() in DIRECT_QUOTED_CCY:
+            out[col] = 1.0 / pd.to_numeric(out[col], errors='coerce')
+    return out
+
+
 def standardize_date(df: pd.DataFrame) -> pd.DataFrame:
     """Convert dates to first of next month for consistency."""
     # Check if 'Country' column contains date-like values
@@ -872,8 +854,11 @@ def process_excel_file() -> None:
                 try:
                     # Load data
                     sheet_data = pd.read_excel(input_file, sheet_name=actual_name)
+                    raw_tickers = list(sheet_data.columns)
                     sheet_data = sheet_data.iloc[2:].reset_index(drop=True)
                     sheet_data.columns = country_names[:len(sheet_data.columns)]
+                    if actual_name == 'Currency':   # mixed Bloomberg quotes -> LCU per USD (2026-10-14)
+                        sheet_data = to_lcu_per_usd(sheet_data, raw_tickers)
                     sheet_data = standardize_date(sheet_data)  # Standardize dates
 
                     # Calculate change
@@ -946,6 +931,7 @@ def process_excel_file() -> None:
                 try:
                     # Load data
                     data = pd.read_excel(input_file, sheet_name=sheet_name)
+                    raw_tickers = list(data.columns)
                     data = data.iloc[2:].reset_index(drop=True)
                     
                     # Special handling for MCAP Adj sheet - limit to 400 rows
@@ -959,6 +945,8 @@ def process_excel_file() -> None:
                         raise ValueError(f"Sheet {sheet_name} has more columns than expected")
                     
                     data.columns = country_names[:num_cols]
+                    if sheet_name == 'Currency':   # mixed Bloomberg quotes -> LCU per USD (2026-10-14)
+                        data = to_lcu_per_usd(data, raw_tickers)
                     
                     # Standardize dates for all sheets to ensure consistent date alignment
                     data = standardize_date(data)
@@ -983,7 +971,7 @@ def process_excel_file() -> None:
                             all_regime_break_log.extend(replacements)
 
                     # Process non-Mcap sheets
-                    if sheet_name in process_sheets:
+                    if APPLY_TWO_SIDED_CLEANING and sheet_name in process_sheets:
                         total_winsorized_changes = 0
                         total_local_outlier_changes = 0
                         

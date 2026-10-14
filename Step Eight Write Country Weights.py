@@ -481,6 +481,12 @@ def write_final_country_weights():
         return
     print(f"Found {len(contributions_df.columns)} factors with non-zero weights on {latest_valid_date}.")
 
+    # 2026-10-14: contributions are computed BEFORE the liquidity cap; scale each country's row pro rata so the
+    # contributions sum to the CAPPED weight written in the Weight column (was a mismatch of up to ~1.5 pt).
+    _raw_sum = contributions_df.sum(axis=1)
+    _capped = latest_weights.reindex(_raw_sum.index)
+    _scale = (_capped / _raw_sum).where(_raw_sum.abs() > 1e-12, 0.0).fillna(0.0)
+    contributions_df = contributions_df.mul(_scale, axis=0)
     # Validate contributions by comparing only countries that exist in both DataFrames
     contributions_sum = contributions_df.sum(axis=1)
     common_countries = contributions_sum.index.intersection(latest_weights.index)

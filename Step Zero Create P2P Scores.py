@@ -88,7 +88,7 @@ def calculate_p2p_score(prices):
 def calculate_performance_metrics(returns):
     """Calculate key performance metrics"""
     # Annualized return
-    ann_return = (1 + returns.mean()) ** 12 - 1
+    ann_return = returns.mean() * 12   # arithmetic, project convention (2026-10-14)
     
     # Annualized volatility
     ann_vol = returns.std() * np.sqrt(12)
@@ -299,7 +299,7 @@ def get_current_signals(all_prices, tickers):
     for ticker in tickers:  # Iterate through tickers in original order
         if ticker in all_prices.columns:
             # Get last 12 months of prices
-            price_window = all_prices[ticker].iloc[-13:]  # Extra month for current
+            price_window = all_prices[ticker].iloc[-12:]  # 12 monthly observations (2026-10-14: was 13)
             if not price_window.isna().any() and len(price_window) >= 12:
                 # Calculate components
                 max_price = price_window.rolling(window=12, min_periods=1).max()
@@ -384,9 +384,9 @@ def format_enhanced_results(metrics, cum_returns, returns_df, start_date):
     output += "="*100 + "\n\n"
 
     active_df = pd.Series(active_metrics).to_frame('Value')
-    active_df['Value'] = active_df['Value'].apply(
-        lambda x: f"{x:>8.2f}%" if "Ratio" not in active_df.index[active_df['Value'] == x][0] else f"{x:>8.2f}"
-    )
+    # 2026-10-14: format by metric NAME (was looked up by matching the float value); only true ratios lack '%'
+    active_df['Value'] = [f"{v:>8.2f}" if name in ("Information Ratio", "Sharpe Ratio") else f"{v:>8.2f}%"
+                          for name, v in active_df['Value'].items()]
     output += active_df.to_string(justify='right')
     
     # Add annual returns
@@ -417,7 +417,7 @@ def save_historical_p2p_scores(all_prices, tickers, start_date='2000-01-01'):
         for ticker in tickers:
             if ticker not in all_prices.columns:
                 continue
-            price_window = all_prices[ticker].iloc[i - 12 : i + 1]
+            price_window = all_prices[ticker].iloc[i - 11 : i + 1]   # 12 observations (2026-10-14: was 13)
             if not price_window.isna().any() and len(price_window) > 1:
                 score = calculate_p2p_score(price_window)
                 if score is not None:

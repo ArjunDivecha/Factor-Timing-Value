@@ -42,7 +42,7 @@ def _stats_for_slice(
     if len(pr) == 0:
         return {m: float("nan") for m in METRIC_ORDER}
 
-    ann_return = (1 + pr.mean()) ** 12 - 1
+    ann_return = pr.mean() * 12   # arithmetic (2026-10-14)
     ann_vol = pr.std() * np.sqrt(12)
     sharpe = ann_return / ann_vol if ann_vol != 0 else 0.0
 

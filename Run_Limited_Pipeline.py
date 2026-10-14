@@ -73,9 +73,9 @@ def main():
         "Step Seventeen Market Regime Analysis.py",
         "Step Eighteen Asset Class Charts.py",
         "Step Twenty PORCH.py",
-        "Step Twenty One Master Report.py",
         "Step FINALFINAL.py",
-        "Step Ten Exposure Dial.py"  # breadth exposure dial; must run after FINALFINAL
+        "Step Ten Exposure Dial.py",  # breadth exposure dial; must run after FINALFINAL
+        "Step Twenty One Master Report.py",  # 2026-10-14: last, so the report includes this run's dial PDFs
     ]
     
     print(f"Starting T2 Factor Timing Pipeline Execution")

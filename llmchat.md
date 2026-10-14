@@ -231,3 +231,19 @@ SESSION END: 2026-07-01 10:38 PDT | Agent: Cursor (Claude)
 | ema_a0.3_k0 | 3.19 / 0.75 | 3.42 / 0.88 | 3.06 / 0.68 | 5.10 / 1.12 | 4.28 | 7.2 |
 
 **Verdict:** NOT adopted. Every arm within +-0.1pp of control on every window; no arm clears Momentum's IR +0.05 adopt bar. The Top-3 EW + hysteresis (EXIT_BAND=2) + kappa=1 hurdle engine is already damped — factor churn 7%/mo vs 25% in the Momentum QP, and a swap moves 1/3 of the book — so there is no switch noise for an EMA to remove. Removing the cost hurdle (k0) is also a wash (+0.05pp). Production Step Five unchanged. Write-up: `Investment Learnings/T2 Factor Timing Fuzzy Value EMA Damping.md`.
+
+---
+SESSION START: 2026-10-14 13:09 PDT | Agent: Claude Code
+---
+
+### Session Summary
+Fixed the Gemini Step 0-9 audit findings in both T2 repos (Arjun: "fix these"): two-sided cleaning and the regime-break time-series pass removed from Step One; currency quotes normalized to LCU per USD (EUR/GBP/AUD were inverted); Best PE single-lagged; inversion names fixed (Debt to EV, Currency 12); Steps Two/Three exit non-zero on failure; runner prerequisites real, master report last; P2P 12-obs window; mcap benchmark NaN pre-2007 and date-aligned; arithmetic annualization; contribution tables sum to capped weights. Full pipelines rerun from Step Zero in both repos; tests/test_audit_fixes.py added (Momentum 107, Value 99 passed).
+
+### Constraints & Gotchas
+- Value: correcting Best PE timing costs -0.66 pp/yr [-1.54,+0.02], all of it 2000-13 (zero since); kept as the correct data timing, Arjun to confirm. Value Full 2.80 -> 2.49; Momentum 2.68 -> 2.70.
+- A trailing-only regime-break filter was tried and rejected (froze genuine moves, -0.4 pp/yr Momentum).
+- Details: Momentum repo Experiments Deep Dive/Gemini Audit 20261014/VERIFICATION.md. Backups: Backups/*_PRE_AUDITFIX_20261014.*
+
+---
+SESSION END: 2026-10-14 13:09 PDT | Agent: Claude Code
+---

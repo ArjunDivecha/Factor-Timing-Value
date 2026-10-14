@@ -115,6 +115,22 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
 - **Step Four gap-fill uses eligible factors only (2026-10-14, both repos):** a factor's missing month is filled with the
   mean of eligible (Max>0) factors that month. Value: Full 2.93 → 3.04 %/yr (all pre-2013).
 
+- **Data-pipeline fixes after the Gemini Step 0-9 audit (2026-10-14, both repos; `tests/test_audit_fixes.py`):**
+  Step One no longer winsorizes over the full sample or replaces "local outliers" with a window that includes the
+  next 20 months (`APPLY_TWO_SIDED_CLEANING = False`; it had flat-lined e.g. the U.S. Tot Return Index), and the
+  regime-break time-series pass (two-sided = look-ahead; a trailing version froze genuine moves) is removed — only
+  the same-month cross-sectional pass remains, and its log labels are now correct. Currency quotes are normalized to
+  local units per USD (EUR/GBP/AUD were USD per unit, so Currency 12 mixed opposite meanings). Step Two: Best PE is
+  lagged once, not twice (it is BEST_PE_RATIO; the "specific returns" comment was wrong); inversions now match the
+  real sheet names (Debt to EV, Currency 12 — previously silently not inverted). Steps Two and Three exit non-zero on
+  failure (a crash used to look like success). Runner: prerequisites fail on missing inputs; the master report runs
+  last. Step Zero P2P uses 12 observations. Step Two Point Five aligns market-cap weights by date and leaves the
+  market-cap benchmark NaN before 2007 (was 0). Annualized returns are arithmetic (mean x 12) everywhere except the
+  dial's CAGR. Step Eight's contribution table now sums to the capped weights.
+  Effect: Momentum Full 2.68 -> 2.70 %/yr (+0.02 [-0.43, +0.47]); Value 2.80 -> 2.49 (-0.31 [-0.93, +0.34]), almost all
+  from correcting Best PE timing (-0.66 [-1.54, +0.02], all of it 2000-2013; zero since). Details:
+  Momentum `Experiments Deep Dive/Gemini Audit 20261014/VERIFICATION.md`.
+
 ## Current state
 - **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
   on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.

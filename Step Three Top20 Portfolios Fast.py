@@ -396,7 +396,8 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_dir: str)
         "1MRet", "3MRet", "6MRet", "9MRet", "12MRet",
         "120MA_CS", "120MA_TS", "MCAP Adj_CS", "MCAP Adj_TS",
         "MCAP_CS", "MCAP_TS", "PX_LAST_CS", "PX_LAST_TS",
-        "Tot Return Index_CS", "Tot Return Index_TS",
+        "Tot Return Index _CS", "Tot Return Index _TS",   # 2026-10-14: sheet name has a trailing space
+        "12MTR_CS", "12MTR_TS",
         "Currency_CS", "Currency_TS", "BEST EPS_CS", "BEST EPS_TS",
         "Trailing EPS_CS", "Trailing EPS_TS",
     ]
@@ -474,6 +475,7 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_dir: str)
         import traceback
         print(f"\nERROR: {err}")
         traceback.print_exc()
+        raise SystemExit(1)   # 2026-10-14: was exit 0, so the runner treated a crash as success
 
 
 if __name__ == "__main__":

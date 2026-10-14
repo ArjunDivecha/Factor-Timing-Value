@@ -78,25 +78,11 @@ def read_data(file_path: str = 'T2 Master.xlsx', return_sheet: str = '1MRet') ->
         
         # Create a new weights dataframe with the same index as returns
         # This assumes that the rows in both sheets are in the same order
-        if len(weights_raw) != len(returns):
-            print(f"WARNING: Number of rows in weights ({len(weights_raw)}) doesn't match returns ({len(returns)})")
-            # If weights has fewer rows, we'll pad it with zeros for the missing rows
-            if len(weights_raw) < len(returns):
-                missing_rows = len(returns) - len(weights_raw)
-                padding = pd.DataFrame(0, index=returns.index[-missing_rows:], columns=weights_raw.columns)
-                weights_data = weights_raw.values
-                weights = pd.DataFrame(weights_data, index=returns.index[:-missing_rows], columns=weights_raw.columns)
-                weights = pd.concat([weights, padding])
-                print(f"Added {missing_rows} rows of zeros to weights")
-            else:
-                # If weights has more rows, we'll use only the first rows that match returns
-                weights_data = weights_raw.iloc[:len(returns)].values
-                weights = pd.DataFrame(weights_data, index=returns.index, columns=weights_raw.columns)
-                print(f"Truncated weights to match returns length")
-        else:
-            weights_data = weights_raw.values
-            weights = pd.DataFrame(weights_data, index=returns.index, columns=weights_raw.columns)
-        
+        # 2026-10-14: align by DATE (was by row position, padding with zeros)
+        weights_raw.index = pd.to_datetime(weights_raw.index)
+        weights = weights_raw.reindex(returns.index)
+        if weights.index.equals(returns.index) is False:
+            raise ValueError("weights could not be aligned to the returns dates")
         print("\nWeights data shape (aligned):", weights.shape)
         print("Weights date range:", weights.index[0], "to", weights.index[-1])
         print("\nWeight columns:", weights.columns.tolist()[:5], "... (showing first 5)")
@@ -152,7 +138,10 @@ def prepare_benchmark_data(returns: pd.DataFrame, weights: pd.DataFrame) -> Dict
         print("Equal-weight portfolio calculated")
         
         # Calculate market-cap weighted returns
-        mcap_weight = (calc_returns * calc_weights).sum(axis=1)
+        # 2026-10-14: renormalize over countries that have BOTH a weight and a return; NaN (not 0) when no weights
+        w_valid = calc_weights.where(calc_returns.notna() & calc_weights.notna())
+        denom = w_valid.sum(axis=1, min_count=1)
+        mcap_weight = (calc_returns * w_valid).sum(axis=1, min_count=1) / denom
         print("Market-cap weighted portfolio calculated")
         
         # Check if 'U.S.' is in the columns
@@ -194,7 +183,7 @@ def prepare_benchmark_data(returns: pd.DataFrame, weights: pd.DataFrame) -> Dict
             print(f"\n{name}:")
             print(f"Mean monthly return: {clean_series.mean():.4%}")
             print(f"Monthly volatility: {clean_series.std():.4%}")
-            print(f"Annualized return: {(1 + clean_series.mean())**12 - 1:.4%}")
+            print(f"Annualized return (arithmetic, mean x 12): {clean_series.mean()*12:.4%}")
             print(f"Annualized volatility: {clean_series.std() * np.sqrt(12):.4%}")
         
         return benchmarks
