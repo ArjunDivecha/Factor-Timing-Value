@@ -3,9 +3,13 @@ US Weight Adjustment for Country Portfolio
 ========================================
 
 This program adjusts the US weight in the country portfolio according to the formula:
-New US Weight = 25% + (50% * US Alpha)
+New US Weight = 25% + (50% * US Alpha), clamped to [25%, 50%]
 
 It then rescales all other countries proportionally to maintain a total weight of 100%.
+
+Why the band (Arjun, 2026-10-14): the U.S. is a special case -- the portfolio should never be out of it, and
+the alpha should not push it above half the book. Before this the clamp was [0%, 100%] (U.S. weight ranged
+0-100%, averaging 36% over 2000-2026). VALUE STRATEGY ONLY -- the Momentum sibling has no U.S. adjustment.
 
 INPUT FILES
 ==========
@@ -17,12 +21,15 @@ OUTPUT FILES
 Overwrites with adjusted weights1. "T2_Final_Country_Weights.xlsx" - 
 2. "T2_Country_Final.xlsx" - Overwrites with adjusted final weights
 
-Version: 1.0
-Last Updated: 2025-07-29
+Version: 1.1
+Last Updated: 2026-10-14 (U.S. weight clamped to [25%, 50%])
 """
 
 import pandas as pd
 import numpy as np
+
+US_WEIGHT_MIN = 0.25   # never out of the U.S. (Arjun, 2026-10-14)
+US_WEIGHT_MAX = 0.50   # never more than half the book
 from tqdm import tqdm
 
 # ===============================
@@ -67,8 +74,8 @@ for date in tqdm(all_dates):
         # Calculate new US weight: 25% + (50% * US Alpha)
         new_us_weight = 0.25 + (0.5 * us_alpha)
         
-        # Ensure new US weight is within reasonable bounds [0, 1]
-        new_us_weight = max(0.0, min(1.0, new_us_weight))
+        # Clamp to the U.S. band [US_WEIGHT_MIN, US_WEIGHT_MAX] (was [0, 1] before 2026-10-14)
+        new_us_weight = max(US_WEIGHT_MIN, min(US_WEIGHT_MAX, new_us_weight))
         
         # Get current US weight
         current_us_weight = adjusted_weights.loc[date, 'U.S.']

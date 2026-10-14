@@ -107,6 +107,14 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
   2013-24 4.21 → 3.94 (REER had been helping the U.S. adjustment). A broader rule (alphas from eligible factors only)
   was tried and reverted pending Arjun: it would cut the U.S. weight 2.4 pt.
 
+- **U.S. weight is clamped to [25 %, 50 %] (Arjun, 2026-10-14; VALUE ONLY).** Step Eight Point Five sets U.S. = 25 % +
+  50 % × U.S. country alpha, now clamped to the band (was [0, 100 %]). Rationale: the U.S. is a special case — never out
+  of it, never more than half. Effect: Full 3.04 → 2.80 %/yr, IR 0.70 unchanged, TE 4.4 → 4.0, all of the cost in
+  2000-12; 2013+ unchanged; Oct-2026 book unchanged (42.2 %). `tests/test_us_band.py`. The alpha input (all-factor
+  composite) is unchanged; see `Experiments Deep Dive/US Adjustment Variants 20261014/US_SIZING_PREREG.md`.
+- **Step Four gap-fill uses eligible factors only (2026-10-14, both repos):** a factor's missing month is filled with the
+  mean of eligible (Max>0) factors that month. Value: Full 2.93 → 3.04 %/yr (all pre-2013).
+
 ## Current state
 - **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
   on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.

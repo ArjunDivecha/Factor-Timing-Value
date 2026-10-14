@@ -34,3 +34,9 @@ def test_outputs_have_no_reer_column(fname):
     if not os.path.exists(p): pytest.skip(f"{fname} not present")
     cols = pd.read_excel(p, nrows=1).columns
     assert not [c for c in cols if "REER" in str(c).upper()]
+
+
+def test_step_four_gap_fill_uses_eligible_factors_only():
+    s = src("Step Four Create Monthly Top20 Returns FAST.py")
+    assert "row.fillna(row.mean())" not in s
+    assert s.count("row.fillna(row[elig_cols].mean())") == 2 and "def _eligible_factor_columns" in s

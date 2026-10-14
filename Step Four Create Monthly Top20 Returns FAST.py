@@ -67,6 +67,7 @@ python "Step Four Create Monthly Top20 Returns FAST.py"
 NOTES:
 - Excludes multi-month return variables and technical indicators from analysis
 - Missing factor values are handled by skipping those country-date combinations
+- A factor's missing MONTH is filled with that month's mean across ELIGIBLE factors (Max>0) since 2026-10-14
 - Cross-sectional mean filling ensures no missing data in final output
 - Results are scaled to percentage points (multiplied by 100)
 =============================================================================
@@ -259,6 +260,18 @@ def analyze_portfolios(
 # ------------------------------------------------------------------
 # Excel Output Helpers (unchanged, except debug prints preserved)
 # ------------------------------------------------------------------
+def _eligible_factor_columns(columns):
+    """Factors eligible in Step Factor Categories.xlsx (Max > 0; a factor missing from the workbook defaults to
+    eligible, the same rule Step Five uses). Since 2026-10-14 (Arjun) the cross-factor mean that fills a factor's
+    missing month is taken over ELIGIBLE factors only, so excluded factors cannot shape the history of held ones."""
+    cats = pd.read_excel("Step Factor Categories.xlsx")
+    max_w = dict(zip(cats["Factor Name"], cats["Max"]))
+    cols = [c for c in columns if max_w.get(c, 1.0) > 0]
+    if not cols:
+        raise RuntimeError("No eligible factors found for the gap-fill mean")
+    return cols
+
+
 def save_net_returns_to_excel(net_returns: Dict[str, pd.Series], output_path: str):
     """Save monthly net returns and trailing-60M averages to Excel."""
     print("\nDebug information:")
@@ -320,7 +333,9 @@ def save_net_returns_to_excel(net_returns: Dict[str, pd.Series], output_path: st
     # Trailing 60-month averages (T60.xlsx)
     # ------------------------------------------------------------------
     print("\nWriting trailing 60-month averages to T60.xlsx …")
-    filled = net_df.apply(lambda row: row.fillna(row.mean()), axis=1)
+    elig_cols = _eligible_factor_columns(net_df.columns)
+    print(f"Gap-fill mean uses {len(elig_cols)} eligible factors (of {net_df.shape[1]})")
+    filled = net_df.apply(lambda row: row.fillna(row[elig_cols].mean()), axis=1)
 
     # Add an extra future month before rolling
     next_month = filled.index[-1] + pd.DateOffset(months=1)
@@ -338,7 +353,7 @@ def save_net_returns_to_excel(net_returns: Dict[str, pd.Series], output_path: st
     # ------------------------------------------------------------------
     # Main net-return sheet (T2_Optimizer.xlsx)
     # ------------------------------------------------------------------
-    net_df = net_df.apply(lambda row: row.fillna(row.mean()), axis=1) * 100
+    net_df = net_df.apply(lambda row: row.fillna(row[elig_cols].mean()), axis=1) * 100
     net_df.sort_index(inplace=True)
     net_df.to_excel(
         output_path, sheet_name="Monthly_Net_Returns", index_label="Date"
