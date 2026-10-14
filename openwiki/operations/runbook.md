@@ -53,11 +53,13 @@ Dry run, dial off (pre-exposure-dial behavior):
 python "Step Schwab Trading.py" --exposure-mode off
 ```
 
-Live mode — dial mode is refused until `EXPOSURE_DIAL_LIVE_APPROVED` is set True in the script;
-use `--exposure-mode off` for a standard live rebalance until then:
+Live dial mode was approved by Arjun on 2026-10-11 after a real-account dry run and plan
+validation (`outputs/dial_enable_20261011/`). Activation submitted no orders. Dry-run is
+still the default. A separately authorized live rebalance uses both live flags:
 ```bash
-python "Step Schwab Trading.py" --live --confirm-live --exposure-mode off
+python "Step Schwab Trading.py" --live --confirm-live --exposure-mode dial
 ```
+Use `--exposure-mode off` to explicitly select the standard 100% strategy.
 
 ## Safety checks before changing or running live trading
 - Confirm the target workbook is fresh enough; the script enforces staleness checks.
@@ -91,7 +93,9 @@ The pipeline and trading scripts create many root-level artifacts. The most impo
 2. Run the pipeline (`Run_All_Pipeline.py` or `Run_Limited_Pipeline.py`) — `Step Ten Exposure
    Dial.py` runs last.
 3. Dry-run the trader in dial mode and review the plan (target exposure, buying power, largest orders).
-4. Live rebalance with `--exposure-mode off` until `EXPOSURE_DIAL_LIVE_APPROVED` is set True.
+4. When a live rebalance is separately authorized, use `--live --confirm-live --exposure-mode dial`.
+   The Value live-dial gate is approved; market-hours, staleness, buying-power, and execution
+   safety checks still apply. A dry run alone never submits orders.
 
 ## Trader exposure mode
 `Step Schwab Trading.py` takes `--exposure-mode {dial,off}` (default `dial`). In `dial` mode the

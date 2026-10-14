@@ -32,9 +32,9 @@ the trading engine and must stay in sync (see gotchas).
   `Step Ten Create Final Report.py` (PDF report generator), which is deleted.
 - `.../Step Schwab Trading.py` + `.../step_schwab_dashboard.py` — **live-money TWAP executor.** New
   `--exposure-mode {dial,off}` flag (default `dial`) scales the country book by `Exposure_Dial`'s
-  `target_exposure`; `off` reproduces the pre-dial behavior exactly. Live dial-mode runs are refused
-  until `EXPOSURE_DIAL_LIVE_APPROVED` is set True — use `--exposure-mode off` for live rebalances
-  until then.
+  `target_exposure`; `off` reproduces the pre-dial behavior exactly. Arjun approved the Value
+  account's live dial on 2026-10-11 after a real-account dry run; `EXPOSURE_DIAL_LIVE_APPROVED`
+  is True. Dry-run remains the default; submitting orders requires `--live --confirm-live`.
 - `.../Run_All_Pipeline.py` — canonical step order (from scratch), now ending in `Step FINALFINAL.py`
   → `Step Ten Exposure Dial.py`. `Run_Limited_Pipeline.py` reruns from Step Five onward, same ending.
 - `.../Step Factor Categories.xlsx` — factor eligibility whitelist (Max>0 → the 36 Value+Quality
@@ -99,8 +99,9 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
 - **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
   on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.
 - **Exposure dial added 2026-09-27** (breadth-based 0-200% overlay, decided by Arjun; research in
-  the Momentum repo's `Experiments Deep Dive/Regime Breadth Overlay/FINDINGS.md`). October 2026 is
-  dry-run only — the live trader stays in `--exposure-mode off` until `EXPOSURE_DIAL_LIVE_APPROVED`.
+  the Momentum repo's `Experiments Deep Dive/Regime Breadth Overlay/FINDINGS.md`). Live dial
+  approved for Value on 2026-10-11 after a read-only Schwab dry run and plan validation
+  (`outputs/dial_enable_20261011/`). No trades were submitted during activation.
 - Done: Top-3 Tcost engine, ADV liquidity cap, hardened Schwab engine (fake-broker suite passes,
   incl. exposure-dial tests), OpenWiki docs.
 - **Known-untested:** the entire research pipeline (Steps 0-21). Only the trading engine has tests.

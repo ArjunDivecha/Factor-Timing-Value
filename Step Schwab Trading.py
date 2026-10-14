@@ -264,10 +264,10 @@ BUYING_POWER_RESERVE_PCT = 0.03
 # liquidationValue (NOT a multiple of exposure, which would shrink at low
 # exposure and trip on an ordinary sub-5% unfilled-sell residue).
 LEVERAGE_GUARD_SLACK_PCT = 0.05
-# Flip to True only after reviewing a dial-mode dry run. While False, a live
-# run in dial mode refuses to start; use --exposure-mode off for a standard
-# live rebalance.
-EXPOSURE_DIAL_LIVE_APPROVED = False
+# Approved by Arjun on 2026-10-11 after a real-account, read-only dial dry run
+# and plan validation (outputs/dial_enable_20261011). This account-specific
+# approval does not submit orders: --live AND --confirm-live remain required.
+EXPOSURE_DIAL_LIVE_APPROVED = True
 
 DEFAULT_IMESSAGE_RECIPIENT = "+15104212111"
 

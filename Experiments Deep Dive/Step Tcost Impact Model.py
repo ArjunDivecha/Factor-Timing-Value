@@ -46,6 +46,7 @@ NOTES:
 =============================================================================
 """
 
+from ibkr_connect import open_market_data
 import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -88,7 +89,7 @@ def pull_ibkr_liquidity(countries, tickers):
     """Pull trailing-1y daily bars per ETF -> median $ADV and daily vol.
     Returns DataFrame[Country, ETF, ADV_USD, Sigma_Daily, Source] or None on failure."""
     try:
-        from ib_insync import IB, Stock
+        from ibkr_connect.compat import IB, Stock
     except Exception as e:
         print("ib_insync import failed:", e)
         return None
@@ -96,7 +97,10 @@ def pull_ibkr_liquidity(countries, tickers):
     ib = IB()
     for port in IB_PORTS:
         try:
-            ib.connect("127.0.0.1", port, clientId=92, timeout=8)
+            # ibkr_connect resolves gateway/port/clientId from the consumer name
+            # and verifies the gateway is really answering (2026-08-19
+            # consolidation). Was: ib.connect("127.0.0.1", port, clientId=92, timeout=8...)
+            ib = open_market_data("t2-tcost")
             print(f"Connected to IBKR on port {port}: {ib.reqCurrentTime()}")
             break
         except Exception as e:
