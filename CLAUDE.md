@@ -128,7 +128,8 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
   market-cap benchmark NaN before 2007 (was 0). Annualized returns are arithmetic (mean x 12) everywhere except the
   dial's CAGR. Step Eight's contribution table now sums to the capped weights.
   Effect: Momentum Full 2.68 -> 2.70 %/yr (+0.02 [-0.43, +0.47]); Value 2.80 -> 2.49 (-0.31 [-0.93, +0.34]), almost all
-  from correcting Best PE timing (-0.66 [-1.54, +0.02], all of it 2000-2013; zero since). Details:
+  from correcting Best PE timing (-0.66 [-1.54, +0.02], all of it 2000-2013; zero since). **Arjun confirmed 2026-10-14: keep the corrected
+  (single-lag) Best PE timing in both repos — do not restore the double lag.** Details:
   Momentum `Experiments Deep Dive/Gemini Audit 20261014/VERIFICATION.md`.
 
 ## Current state

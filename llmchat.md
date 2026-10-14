@@ -247,3 +247,14 @@ Fixed the Gemini Step 0-9 audit findings in both T2 repos (Arjun: "fix these"): 
 ---
 SESSION END: 2026-10-14 13:09 PDT | Agent: Claude Code
 ---
+
+---
+SESSION START: 2026-10-14 13:16 PDT | Agent: Claude Code
+---
+
+### Decisions Made
+- Arjun confirmed: keep the corrected (single-lag) Best PE timing in both repos, despite the -0.66 pp/yr backtest cost in Value (all 2000-13, zero since). No code change; docs updated.
+
+---
+SESSION END: 2026-10-14 13:16 PDT | Agent: Claude Code
+---
