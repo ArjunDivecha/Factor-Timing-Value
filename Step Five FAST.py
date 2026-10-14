@@ -14,6 +14,11 @@ INPUT FILES:
 - /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_Trading_Cost.xlsx
     Sheet "Trading_Costs": per-factor, per-month one-way trading cost in
     PERCENT (0.07 = 7 basis points). Produced by Step Four.
+    Since 2026-10-14 the per-country input to Step Four (Step Tcost.xlsx) is Bloomberg LQA all-in
+    one-way cost at $122k (median live parent order), built by the Momentum repo's
+    "Experiments Deep Dive/LQA Costs/build_lqa_cost_table.py". It replaced a 2025 half-spread table that
+    was ~2.6x higher on average (mean factor cost 6.8 -> 2.6 bps). With true costs the hurdle rarely
+    binds (swaps blocked 30 -> 2 on the same data); full-sample effect +0.05 pp/yr, 95% [-0.15, +0.31].
 
 OUTPUT FILES:
 - /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/T2_rolling_window_weights.xlsx
@@ -54,6 +59,7 @@ this adds +0.20%/yr over plain Top3 hysteresis (3.96% -> 4.16% net), cuts
 factor turnover from 4.5%/mo to 3.2%/mo, keeps the same Sharpe (0.84) and
 max drawdown (-10.3%), and improves the 2018-2026 era (1.22% -> 2.03%/yr).
 KAPPA = 1.0 is the sweet spot; higher values make the portfolio stale.
+(That calibration used the pre-2026-10-14 cost table; KAPPA was NOT re-tuned on LQA costs.)
 See: Experiments Deep Dive/exp_value_tcost_aware.py.
 
 The output file format is byte-compatible with Step Five FAST.py, so every

@@ -6,8 +6,8 @@ repo_name: T2 Factor Timing Fuzzy Value
 github_repo: ArjunDivecha/Factor-Timing-Value
 session_id: fc530a1c-d32b-43db-810f-70fd7a3bf608
 source_file: fc530a1c-d32b-43db-810f-70fd7a3bf608.jsonl
-exported_at: 2026-10-08T18:42:21.328133+00:00
-export_base_commit_sha: c612dbfd2ca63ffa09dc9eda590a78e6d28cf35c
+exported_at: 2026-10-14T18:25:04.924614+00:00
+export_base_commit_sha: b454f89053db79bb097067edfc3d82babfa218ba
 redacted: true
 ---
 
@@ -248,3 +248,26 @@ comitt and push
 
 
 **Assistant:** [REDACTED]
+
+
+**Assistant:** [REDACTED]
+
+
+**Assistant:** [REDACTED]
+
+
+**Assistant:** Both repos are committed and pushed.
+
+### T2 Factor Timing Fuzzy (Momentum)
+- **Commit:** `d37fea4` — Fix P2P ticker-to-country mapping in Step Zero and Step One  
+- **Pushed:** `main` → `origin/main` (`Country-Factor-Momentum-Strategy`)  
+- **Included:** `p2p_country_mapping.py`, `tests/test_p2p_country_mapping.py`, Step Zero, Step One (+ pre-commit agent-context files)  
+- **Left uncommitted:** `T2_exposure_dial_log.txt`, `optimization_log.txt`, `pipeline_summary.txt`
+
+### T2 Factor Timing Fuzzy Value
+- **Commit:** `b454f89` — same message  
+- **Pushed:** `main` → `origin/main` (`Factor-Timing-Value`)  
+- **Included:** same P2P files + Step Zero/One (+ pre-commit agent-context)  
+- **Left uncommitted:** `Experiments Deep Dive/Step Tcost Impact Model.py`, logs, `outputs/`, etc.
+
+[REDACTED
