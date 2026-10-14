@@ -190,7 +190,7 @@ INVERTED_FEATURES = {
     'BEST PS', 'BEST ROE', 'EV to EBITDA', 'Shiller PE', 'Trailing PE', 'Positive PE', 
     'Best Price Sales', 'Debt To EV',
     # Economic Indicators
-    'Currency Change', 'Debt to GDP', 'REER', '10Yr Bond 12', 'Bond Yield Change',
+    'Currency Change', 'Debt to GDP', '10Yr Bond 12', 'Bond Yield Change',  # REER removed 2026-10-14
     # Technical Indicators
     'RSI14', 'Advance Decline', '1MTR', '3MTR', 
     # Risk Metrics

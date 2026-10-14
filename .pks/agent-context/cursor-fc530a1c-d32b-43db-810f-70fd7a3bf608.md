@@ -6,8 +6,8 @@ repo_name: T2 Factor Timing Fuzzy Value
 github_repo: ArjunDivecha/Factor-Timing-Value
 session_id: fc530a1c-d32b-43db-810f-70fd7a3bf608
 source_file: fc530a1c-d32b-43db-810f-70fd7a3bf608.jsonl
-exported_at: 2026-10-14T18:52:16.495445+00:00
-export_base_commit_sha: 2fc2d6188c1dd49b24ba2d73f070cfc754a3e567
+exported_at: 2026-10-14T19:11:41.418329+00:00
+export_base_commit_sha: 802d9e54b7dccfd06703eb89244377bd0f76ba59
 redacted: true
 ---
 

@@ -391,7 +391,10 @@ def run_portfolio_analysis(
     trading_costs = trading_costs[~trading_costs.index.duplicated(keep="first")]
 
     # All variables except the return series
-    features = sorted(set(data["variable"]) - {"1MRet"})
+    # REER_CS/REER_TS are excluded from production (Arjun, 2026-10-14): BIS retrospective rebasing contaminates their history (Momentum repo Archive/REER_Audit_20261007/REPORT.md).
+    EXCLUDED_FACTORS = {"REER_CS", "REER_TS"}
+    features = sorted(set(data["variable"]) - {"1MRet"} - EXCLUDED_FACTORS)
+    print(f"Excluded factors (not built): {sorted(EXCLUDED_FACTORS)}")
 
     print("Analyzing portfolios …")
     net_returns, monthly_trading_costs = analyze_portfolios(

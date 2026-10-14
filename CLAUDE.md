@@ -95,6 +95,18 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
   across both accounts (unscaled; realized/LQA 0.39, 95 % [-0.28, 1.23]). The κ=1 hurdle now rarely binds; effect on
   the backtest is nil (+0.05 pp/yr). κ was not re-tuned. See Momentum `Experiments Deep Dive/LQA Costs/FINDINGS.md`.
 
+- **REER is not used anywhere in production (Arjun, 2026-10-14).** Steps Three and Four no longer build REER_CS/REER_TS
+  (skip list / `EXCLUDED_FACTORS`), so they are absent from `T2 Top20.xlsx`, `T2_Optimizer.xlsx`, `T60.xlsx` and every
+  downstream file; Step Six refuses to run if a REER factor reappears; `tests/test_reer_excluded.py` guards it. Two leaks
+  existed even after REER was set to Max=0 on 2026-10-07: (1) Step Four fills a factor's missing month with the mean
+  across ALL factors that month, so REER moved other factors' early-2000s returns and hence Step Five's windows;
+  (2) Step Six summed every T60 column into Country Alpha. Step Two still normalizes the raw REER series (data only).
+  Related, NOT changed: the cross-factor fill and Step Six still include the other Max=0 factors.
+  **Value-specific:** Step Eight Point Five (US adjustment) sizes the U.S. position from Step Six country alphas, so
+  alphas are not cosmetic here. Removing REER moved the Oct-2026 U.S. weight +0.02 pt; backtest Full 3.05 → 2.93 %/yr,
+  2013-24 4.21 → 3.94 (REER had been helping the U.S. adjustment). A broader rule (alphas from eligible factors only)
+  was tried and reverted pending Arjun: it would cut the U.S. weight 2.4 pt.
+
 ## Current state
 - **Active, live-trading.** Account #167 completed its first hardened-engine live TWAP rebalance
   on 2026-07-01 (zero MANUAL_REQUIRED, zero aborts). Latest research outputs regenerated 2026-07-05.

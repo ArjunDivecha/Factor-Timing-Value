@@ -310,6 +310,10 @@ def main():
     factor_file_factors = [c for c in factor_df.columns if c != 'Date']
     # Only use factors present in both
     factor_names = [f for f in factor_file_factors if f in exposure_factors]
+    # REER guard (2026-10-14): REER_CS/REER_TS are no longer built by Steps Three/Four, so they cannot be in
+    # T60.xlsx; refuse to run if they ever reappear. (Other Max=0 factors still contribute here -- unchanged.)
+    if any(f.startswith('REER') for f in factor_names):
+        raise RuntimeError(f"REER must not contribute to country alphas: {[f for f in factor_names if f.startswith('REER')]}")
     print(f"Number of factors used: {len(factor_names)}")
 
     # 3. For each month, calculate country alphas (sequential processing)

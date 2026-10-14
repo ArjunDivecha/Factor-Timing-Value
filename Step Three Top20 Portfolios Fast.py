@@ -389,6 +389,10 @@ def run_portfolio_analysis(data_path: str, benchmark_path: str, output_dir: str)
     os.makedirs(output_dir, exist_ok=True)
 
     skip_variables = [
+
+        # REER_CS/REER_TS are excluded from production (Arjun, 2026-10-14): BIS retrospective rebasing contaminates their history (Momentum repo Archive/REER_Audit_20261007/REPORT.md).
+
+        "REER_CS", "REER_TS",
         "1MRet", "3MRet", "6MRet", "9MRet", "12MRet",
         "120MA_CS", "120MA_TS", "MCAP Adj_CS", "MCAP Adj_TS",
         "MCAP_CS", "MCAP_TS", "PX_LAST_CS", "PX_LAST_TS",
