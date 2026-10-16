@@ -27,7 +27,8 @@ factor's alpha by the country's exposure to that factor:
    Where:
    - Factor_Exposure[country, factor, month] = Country's exposure to a specific factor in that month
    - Factor_Alpha[factor, month] = Factor's alpha signal for that month (from optimization)
-   - Σ = Sum across all available factors
+   - Σ = Sum across the ELIGIBLE factors (Max > 0 in Step Factor Categories.xlsx, the factors Step Five
+     may hold; since 2026-10-16 -- before that every T60 factor was summed, switched-off ones included)
 
 3. STEP-BY-STEP PROCESS:
    a) For each month, extract factor alphas from T60.xlsx
@@ -81,7 +82,10 @@ INPUT FILES:
      * One row per country-date combination
      * Missing values will be filled with factor-date means
 
-3. T2 Master.xlsx (optional)
+3. Step Factor Categories.xlsx
+   - Factor eligibility: only factors with Max > 0 contribute (missing factors are excluded)
+
+4. T2 Master.xlsx (optional)
    - Source: Reference file for country order
    - Format: Excel workbook
    - Sheet: '1MRet' (used for country order reference)
@@ -123,6 +127,9 @@ PERFORMANCE CONSIDERATIONS:
 - Batch processing of dates to limit memory usage
 
 VERSION HISTORY:
+- 2.2 (2026-10-16): Country alphas from eligible factors only (Arjun). Step Eight Point Five sizes the U.S. from
+  these alphas, so switched-off factors had been setting Value's U.S. weight. Also reads Step Factor Categories.xlsx
+  (absolute path: /Users/arjundivecha/Dropbox/AAA Backup/A Complete/T2 Factor Timing Fuzzy Value/Step Factor Categories.xlsx).
 - 2.1 (2025-06-17): Updated docstrings to match new format
 - 2.0 (2025-06-15): Switched to Top_20_Exposure.csv format, added parallel processing
 - 1.0 (2025-06-10): Initial version using Normalized_T2_MasterCSV.csv
@@ -158,6 +165,16 @@ T60_FILE = 'T60.xlsx'
 EXPOSURE_FILE = 'T2_Top_20_Exposure.csv'  # New wide-format exposure file
 T2_MASTER_FILE = 'T2 Master.xlsx'  # Reference file for country order
 OUTPUT_FILE = 'T2_Country_Alphas.xlsx'
+CATEGORIES_FILE = 'Step Factor Categories.xlsx'  # factor eligibility (Max column), shared with Step Five
+
+
+def eligible_factors(factor_names, categories_file=CATEGORIES_FILE):
+    """Split factor_names into (eligible, excluded) by the Max column of Step Factor Categories.xlsx.
+    Eligible = Max > 0; a factor missing from the file is excluded (Step Five's rule)."""
+    cats = pd.read_excel(categories_file)
+    max_w = dict(zip(cats['Factor Name'], cats['Max']))
+    eligible = [f for f in factor_names if max_w.get(f, 0.0) > 0]
+    return eligible, [f for f in factor_names if f not in eligible]
 
 def load_data():
     """
@@ -311,10 +328,17 @@ def main():
     # Only use factors present in both
     factor_names = [f for f in factor_file_factors if f in exposure_factors]
     # REER guard (2026-10-14): REER_CS/REER_TS are no longer built by Steps Three/Four, so they cannot be in
-    # T60.xlsx; refuse to run if they ever reappear. (Other Max=0 factors still contribute here -- unchanged.)
+    # T60.xlsx; refuse to run if they ever reappear.
     if any(f.startswith('REER') for f in factor_names):
         raise RuntimeError(f"REER must not contribute to country alphas: {[f for f in factor_names if f.startswith('REER')]}")
-    print(f"Number of factors used: {len(factor_names)}")
+    # Eligible factors only (Arjun, 2026-10-16): country alphas are built from the factors Value can hold, the same
+    # rule Step Five uses (Max > 0 in Step Factor Categories.xlsx; a factor missing from that file is excluded).
+    # Before this, all 88 T60 factors contributed, so the 52 switched-off ones (momentum, macro, commodities, bonds)
+    # drove the U.S. weight that Step Eight Point Five sizes from these alphas.
+    factor_names, excluded = eligible_factors(factor_names)
+    if not factor_names:
+        raise RuntimeError("No eligible (Max > 0) factors left for country alphas")
+    print(f"Number of factors used: {len(factor_names)} eligible (excluded {len(excluded)} with Max=0 or not listed)")
 
     # 3. For each month, calculate country alphas (sequential processing)
     missing_log = []

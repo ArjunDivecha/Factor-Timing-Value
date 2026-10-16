@@ -107,6 +107,18 @@ python3 "Step Schwab Trading.py" --exposure-mode off   # LIVE MONEY, dial ignore
   2013-24 4.21 → 3.94 (REER had been helping the U.S. adjustment). A broader rule (alphas from eligible factors only)
   was tried and reverted pending Arjun: it would cut the U.S. weight 2.4 pt.
 
+- **Step Six country alphas use eligible factors only (Arjun, 2026-10-16: "fix the value us bug"; VALUE ONLY).**
+  Only the 36 Max>0 factors contribute (Step Five's rule: a factor missing from `Step Factor Categories.xlsx` is
+  excluded); before, all 88 T60 factors did, so 52 switched-off factors set the U.S. weight and every data fix to an
+  unheld sheet (bonds, Shiller, CDS, Debt to GDP) moved it. Leak check: the bond-sheet fix moved the U.S. 1.2 pt with
+  the old Step Six and 0.0 with the new. Cost, measured in the GDM sandbox
+  (`Global Data Mart/runs/t2_onboard_20261016/fuzzy_impact_bonds/eligfix_summary.json`): Oct-2026 U.S. 43.1 → 37.0 %
+  on the 10-03 workbook, 39.6 → 32.1 % on the 10-16 workbook; U.S. at the 25 % floor in 41-48 % of months (was 26-35 %);
+  gross active Full −0.23 to −0.24 %/yr, IR −0.04, all of it 2013+ (2000-12 unchanged). The 25 % + 50 % × alpha
+  coefficients were NOT refit to the smaller 36-factor alpha. It fails the US_SIZING_PREREG IR test (≥ A − 0.02);
+  Arjun chose it as a correctness fix. Revert = restore `Backups/20261016_step_six_eligible/`.
+  `tests/test_step_six_eligible.py`. The Momentum repo's Step Six is unchanged.
+
 - **U.S. weight is clamped to [25 %, 50 %] (Arjun, 2026-10-14; VALUE ONLY).** Step Eight Point Five sets U.S. = 25 % +
   50 % × U.S. country alpha, now clamped to the band (was [0, 100 %]). Rationale: the U.S. is a special case — never out
   of it, never more than half. Effect: Full 3.04 → 2.80 %/yr, IR 0.70 unchanged, TE 4.4 → 4.0, all of the cost in
